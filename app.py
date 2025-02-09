@@ -9,7 +9,7 @@ class UgyeletiBeosztasGenerator:
     def __init__(self):
         self.orvosok = {}
         self.keresek = {}  # {év: {hónap: {orvos: {nap: státusz}}}}
-        self.felhasznaloi_kivetelek = []  # [(orvos, datum, indok)]
+        self.felhasznaloi_kivetelek = {}  # {orvos: {datum: indok}}
         
     def excel_beolvasas(self, file_content):
         """Excel tartalom feldolgozása memóriából"""
@@ -183,13 +183,13 @@ class UgyeletiBeosztasGenerator:
                 indok = ' '.join(indok_szavak) if indok_szavak else 'nem elérhető'
                 
                 # Kivételek hozzáadása a tartomány minden napjára
+                if orvos_nev not in self.felhasznaloi_kivetelek:
+                    self.felhasznaloi_kivetelek[orvos_nev] = {}
+                    
                 aktualis_datum = datum_kezdet
                 while aktualis_datum <= datum_veg:
-                    self.felhasznaloi_kivetelek.append((
-                        orvos_nev,
-                        aktualis_datum.strftime('%Y-%m-%d'),
-                        indok
-                    ))
+                    datum_str = aktualis_datum.strftime('%Y-%m-%d')
+                    self.felhasznaloi_kivetelek[orvos_nev][datum_str] = indok
                     aktualis_datum += timedelta(days=1)
                 
             except Exception as e:
@@ -247,13 +247,7 @@ class UgyeletiBeosztasGenerator:
         elerheto = []
         for orvos in self.orvosok:
             # Ellenőrizzük a felhasználói kivételeket
-            kivetel_talalat = False
-            for kivetel in self.felhasznaloi_kivetelek:
-                if kivetel[0] == orvos and kivetel[1] == datum_str:
-                    kivetel_talalat = True
-                    break
-            
-            if kivetel_talalat:
+            if orvos in self.felhasznaloi_kivetelek and datum_str in self.felhasznaloi_kivetelek[orvos]:
                 continue
             
             # Ellenőrizzük az Excel-ben megadott kéréseket
@@ -299,6 +293,18 @@ class UgyeletiBeosztasGenerator:
             beosztas[datum.strftime('%Y-%m-%d')] = valasztott_orvosok
         
         return beosztas
+
+    def get_kivetelek_lista(self):
+        """Visszaadja a kivételek listáját feldolgozható formában"""
+        kivetelek_lista = []
+        for orvos, kivetelek in self.felhasznaloi_kivetelek.items():
+            for datum, indok in kivetelek.items():
+                kivetelek_lista.append({
+                    'Orvos': orvos,
+                    'Dátum': datum,
+                    'Indok': indok
+                })
+        return kivetelek_lista
 
 def main():
     st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
@@ -351,15 +357,13 @@ def main():
                 
                 beosztas_df = pd.DataFrame(beosztas_lista)
                 beosztas_df = beosztas_df.sort_values('Dátum')
-                # A táblázat méretének módosítása: szélesség=1000, magasság=600 pixel
                 st.dataframe(beosztas_df, width=1000, height=600)
                 
-                if st.session_state.generator.felhasznaloi_kivetelek:
+                kivetelek_lista = st.session_state.generator.get_kivetelek_lista()
+                if kivetelek_lista:
                     st.subheader("Feldolgozott kivételek")
-                    kivetelek_df = pd.DataFrame(
-                        st.session_state.generator.felhasznaloi_kivetelek,
-                        columns=['Orvos', 'Dátum', 'Indok']
-                    )
+                    kivetelek_df = pd.DataFrame(kivetelek_lista)
+                    kivetelek_df = kivetelek_df.sort_values(['Orvos', 'Dátum'])
                     st.dataframe(kivetelek_df, width=1000, height=600)
                 
                 st.subheader("Ügyeletek statisztikája")
@@ -376,7 +380,7 @@ def main():
                     with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                         beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
                         statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
-                        if st.session_state.generator.felhasznaloi_kivetelek:
+                        if kivetelek_lista:
                             kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
                     
                     output_buffer.seek(0)
