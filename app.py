@@ -9,24 +9,14 @@ class UgyeletiBeosztasGenerator:
     def __init__(self):
         self.orvosok = {}
         self.keresek = {}  # {év: {hónap: {orvos: {nap: státusz}}}}
-        self.felhasznaloi_kivetelek = {}  # {orvos: {datum: indok}}
-
+        self.felhasznaloi_kivetelek = []  # [(orvos, datum, indok)]
+        
     def excel_beolvasas(self, file_content):
         """Excel tartalom feldolgozása memóriából"""
         try:
             # Excel fájl beolvasása memóriából
             excel_buffer = io.BytesIO(file_content)
             xls = pd.ExcelFile(excel_buffer)
-            
-            # Alapértelmezett orvosok hozzáadása (példa)
-            default_orvosok = ["Dr. Nagy János", "Dr. Kiss Péter", "Dr. Kovács Anna", 
-                                "Dr. Szabó István", "Dr. Tóth Mária", "Dr. Horváth Béla"]
-            for orvos in default_orvosok:
-                if orvos not in self.orvosok:
-                    self.orvosok[orvos] = {
-                        'nev': orvos,
-                        'ugyeletek_szama': 0
-                    }
             
             # Munkalapok feldolgozása
             for sheet_name in xls.sheet_names:
@@ -47,44 +37,36 @@ class UgyeletiBeosztasGenerator:
                 honap_szam = honapok.get(honap)
                 
                 if honap_szam:
-                    # Munkalap beolvasása az ExcelFile objektumból
-                    df = pd.read_excel(xls, sheet_name=sheet_name)
+                    # Munkalap beolvasása
+                    df = pd.read_excel(excel_buffer, sheet_name=sheet_name)
                     
                     # Az első oszlop az orvosok neveit tartalmazza
                     orvos_oszlop = df.columns[0]
                     
                     # Orvosok és kéréseik feldolgozása
                     for index, row in df.iterrows():
-                        # Az orvos nevet stringgé alakítjuk és levágjuk a fölösleges szóközöket
-                        orvos_nev = str(row[orvos_oszlop]).strip()
-                        if not orvos_nev or not isinstance(orvos_nev, str):
-                            continue
-
-                        # Opcionális: ha a név túl rövid (pl. csak 'D' vagy 'R'), figyelmeztetés
-                        if len(orvos_nev) < 3:
-                            st.warning(f"A beolvasott orvos neve '{orvos_nev}' túl rövidnek tűnik. "
-                                       "Ellenőrizd az input fájl formátumát!")
-                        
-                        # Orvos hozzáadása a nyilvántartáshoz
-                        if orvos_nev not in self.orvosok:
-                            self.orvosok[orvos_nev] = {
-                                'nev': orvos_nev,
-                                'ugyeletek_szama': 0
-                            }
-                        
-                        # Kérések feldolgozása
-                        for nap in range(1, 32):
-                            if str(nap) in df.columns:
-                                status = row[str(nap)]
-                                if pd.notna(status):
-                                    if ev not in self.keresek:
-                                        self.keresek[ev] = {}
-                                    if honap_szam not in self.keresek[ev]:
-                                        self.keresek[ev][honap_szam] = {}
-                                    if orvos_nev not in self.keresek[ev][honap_szam]:
-                                        self.keresek[ev][honap_szam][orvos_nev] = {}
-                                    
-                                    self.keresek[ev][honap_szam][orvos_nev][nap] = status
+                        orvos_nev = row[orvos_oszlop]
+                        if pd.notna(orvos_nev) and isinstance(orvos_nev, str):
+                            # Orvos hozzáadása a nyilvántartáshoz
+                            if orvos_nev not in self.orvosok:
+                                self.orvosok[orvos_nev] = {
+                                    'nev': orvos_nev,
+                                    'ugyeletek_szama': 0
+                                }
+                            
+                            # Kérések feldolgozása
+                            for nap in range(1, 32):
+                                if str(nap) in df.columns:
+                                    status = row[str(nap)]
+                                    if pd.notna(status):
+                                        if ev not in self.keresek:
+                                            self.keresek[ev] = {}
+                                        if honap_szam not in self.keresek[ev]:
+                                            self.keresek[ev][honap_szam] = {}
+                                        if orvos_nev not in self.keresek[ev][honap_szam]:
+                                            self.keresek[ev][honap_szam][orvos_nev] = {}
+                                        
+                                        self.keresek[ev][honap_szam][orvos_nev][nap] = status
             
             # Excel buffer törlése
             excel_buffer.close()
@@ -93,6 +75,8 @@ class UgyeletiBeosztasGenerator:
         except Exception as e:
             st.error(f"Hiba az Excel beolvasása során: {str(e)}")
             return False
+
+
 
     def kivetel_hozzaadas(self, szoveg):
         """Kivételek feldolgozása a felhasználói szövegből"""
@@ -201,19 +185,19 @@ class UgyeletiBeosztasGenerator:
                 indok = ' '.join(indok_szavak) if indok_szavak else 'nem elérhető'
                 
                 # Kivételek hozzáadása a tartomány minden napjára
-                if orvos_nev not in self.felhasznaloi_kivetelek:
-                    self.felhasznaloi_kivetelek[orvos_nev] = {}
-                    
                 aktualis_datum = datum_kezdet
                 while aktualis_datum <= datum_veg:
-                    datum_str = aktualis_datum.strftime('%Y-%m-%d')
-                    self.felhasznaloi_kivetelek[orvos_nev][datum_str] = indok
+                    self.felhasznaloi_kivetelek.append((
+                        orvos_nev,
+                        aktualis_datum.strftime('%Y-%m-%d'),
+                        indok
+                    ))
                     aktualis_datum += timedelta(days=1)
                 
             except Exception as e:
                 st.warning(f"Hiba a sor feldolgozása során: {sor} - {str(e)}")
                 continue
-
+    
     def _parse_simple_date(self, szavak):
         """Egyszerű dátum feldolgozása"""
         honapok = {
@@ -255,6 +239,7 @@ class UgyeletiBeosztasGenerator:
         
         return None
 
+
     def elerheto_orvosok(self, datum):
         """Visszaadja az adott napon elérhető orvosokat"""
         ev = datum.year
@@ -265,7 +250,13 @@ class UgyeletiBeosztasGenerator:
         elerheto = []
         for orvos in self.orvosok:
             # Ellenőrizzük a felhasználói kivételeket
-            if orvos in self.felhasznaloi_kivetelek and datum_str in self.felhasznaloi_kivetelek[orvos]:
+            kivetel_talalat = False
+            for kivetel in self.felhasznaloi_kivetelek:
+                if kivetel[0] == orvos and kivetel[1] == datum_str:
+                    kivetel_talalat = True
+                    break
+            
+            if kivetel_talalat:
                 continue
             
             # Ellenőrizzük az Excel-ben megadott kéréseket
@@ -281,21 +272,9 @@ class UgyeletiBeosztasGenerator:
                 elerheto.append(orvos)
                 
         return elerheto
-
-    def get_kivetelek_lista(self):
-        """Visszaadja a kivételek listáját feldolgozható formában (rendezve)"""
-        kivetelek_lista = []
-        for orvos, kivetelek in self.felhasznaloi_kivetelek.items():
-            for datum, indok in kivetelek.items():
-                kivetelek_lista.append({
-                    'Orvos': orvos,
-                    'Dátum': datum,
-                    'Indok': indok
-                })
-        return sorted(kivetelek_lista, key=lambda x: (x['Orvos'], x['Dátum']))
-
+    
     def beosztas_generalas(self, ev, honap):
-        """Havi beosztás generálása két orvossal naponta"""
+        """Havi beosztás generálása"""
         napok_szama = calendar.monthrange(ev, honap)[1]
         beosztas = {}
         
@@ -303,24 +282,18 @@ class UgyeletiBeosztasGenerator:
             datum = datetime(ev, honap, nap)
             elerheto_orvosok = self.elerheto_orvosok(datum)
             
-            if len(elerheto_orvosok) < 2:
-                st.warning(f"Nem található elegendő elérhető orvos: {datum.strftime('%Y-%m-%d')} (minimum 2 szükséges)")
-                beosztas[datum.strftime('%Y-%m-%d')] = []
+            if not elerheto_orvosok:
+                st.warning(f"Nem található elérhető orvos: {datum.strftime('%Y-%m-%d')}")
                 continue
             
-            # Két orvos kiválasztása
-            valasztott_orvosok = []
-            for _ in range(2):
-                if elerheto_orvosok:
-                    valasztott_orvos = min(
-                        elerheto_orvosok,
-                        key=lambda x: self.orvosok[x]['ugyeletek_szama']
-                    )
-                    valasztott_orvosok.append(valasztott_orvos)
-                    elerheto_orvosok.remove(valasztott_orvos)
-                    self.orvosok[valasztott_orvos]['ugyeletek_szama'] += 1
+            # Válasszuk ki azt az orvost, akinek a legkevesebb ügyelete van
+            valasztott_orvos = min(
+                elerheto_orvosok,
+                key=lambda x: self.orvosok[x]['ugyeletek_szama']
+            )
             
-            beosztas[datum.strftime('%Y-%m-%d')] = valasztott_orvosok
+            beosztas[datum.strftime('%Y-%m-%d')] = valasztott_orvos
+            self.orvosok[valasztott_orvos]['ugyeletek_szama'] += 1
         
         return beosztas
 
@@ -328,17 +301,21 @@ def main():
     st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
     st.title("Ügyeleti Beosztás Generáló")
     
+    # Session state inicializálása
     if 'generator' not in st.session_state:
         st.session_state.generator = UgyeletiBeosztasGenerator()
     
+    # Excel feltöltés
     feltoltott_file = st.file_uploader("Ügyeleti kérések Excel feltöltése", type=["xlsx"])
     
+    # Dátum választás
     col1, col2 = st.columns(2)
     with col1:
         ev = st.selectbox("Év", [2024, 2025])
     with col2:
         honap = st.selectbox("Hónap", range(1, 13))
     
+    # Kivételek kezelése
     with st.expander("További kivételek megadása"):
         st.write("""
         Itt adhat meg további kivételeket szabad szöveggel. Például:
@@ -353,52 +330,54 @@ def main():
     
     if feltoltott_file is not None and st.button("Beosztás generálása"):
         try:
+            # Excel tartalom beolvasása
             file_content = feltoltott_file.read()
             
+            # Excel feldolgozása
             if st.session_state.generator.excel_beolvasas(file_content):
                 st.success("Excel adatok sikeresen beolvasva!")
                 
+                # Kivételek feldolgozása
                 if kivetelek_szoveg:
                     st.session_state.generator.kivetel_hozzaadas(kivetelek_szoveg)
                 
+                # Beosztás generálása
                 beosztas = st.session_state.generator.beosztas_generalas(ev, honap)
                 
-                # Eredmények megjelenítése két orvoshoz
+                # Eredmények megjelenítése
                 st.subheader("Generált beosztás")
-                beosztas_lista = []
-                for datum, orvosok in beosztas.items():
-                    beosztas_lista.append({
-                        'Dátum': datum,
-                        'Első Orvos': orvosok[0] if len(orvosok) > 0 else None,
-                        'Második Orvos': orvosok[1] if len(orvosok) > 1 else None
-                    })
-                
-                beosztas_df = pd.DataFrame(beosztas_lista)
+                beosztas_df = pd.DataFrame(
+                    [(datum, orvos) for datum, orvos in beosztas.items()],
+                    columns=['Dátum', 'Orvos']
+                )
                 beosztas_df = beosztas_df.sort_values('Dátum')
-                st.dataframe(beosztas_df, width=1000, height=600)
+                st.dataframe(beosztas_df)
                 
-                kivetelek_lista = st.session_state.generator.get_kivetelek_lista()
-                if kivetelek_lista:
+                # Kivételek megjelenítése
+                if st.session_state.generator.felhasznaloi_kivetelek:
                     st.subheader("Feldolgozott kivételek")
-                    kivetelek_df = pd.DataFrame(kivetelek_lista)
-                    kivetelek_df = kivetelek_df.sort_values(['Orvos', 'Dátum'])
-                    st.dataframe(kivetelek_df, width=1000, height=600)
+                    kivetelek_df = pd.DataFrame(
+                        st.session_state.generator.felhasznaloi_kivetelek,
+                        columns=['Orvos', 'Dátum', 'Indok']
+                    )
+                    st.dataframe(kivetelek_df)
                 
+                # Statisztika
                 st.subheader("Ügyeletek statisztikája")
                 statisztika_df = pd.DataFrame(
                     [(nev, adatok['ugyeletek_szama']) 
                      for nev, adatok in st.session_state.generator.orvosok.items()],
                     columns=['Orvos', 'Ügyeletek száma']
                 )
-                st.dataframe(statisztika_df, width=600, height=300)
+                st.dataframe(statisztika_df)
                 
-                # Excel exportálás
+                # Excel exportálás memóriában
                 output_buffer = io.BytesIO()
                 try:
                     with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                         beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
                         statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
-                        if kivetelek_lista:
+                        if st.session_state.generator.felhasznaloi_kivetelek:
                             kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
                     
                     output_buffer.seek(0)
