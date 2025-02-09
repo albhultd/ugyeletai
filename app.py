@@ -14,11 +14,9 @@ class UgyeletiBeosztasGenerator:
     def excel_beolvasas(self, file_content):
         """Excel tartalom feldolgozása memóriából"""
         try:
-            # Excel fájl beolvasása memóriából
             excel_buffer = io.BytesIO(file_content)
             xls = pd.ExcelFile(excel_buffer)
             
-            # Munkalapok feldolgozása
             for sheet_name in xls.sheet_names:
                 # Év és hónap meghatározása a munkalap nevéből
                 if sheet_name.startswith('25 '):
@@ -28,7 +26,6 @@ class UgyeletiBeosztasGenerator:
                     ev = 2024
                     honap = sheet_name.lower()
                 
-                # Hónap sorszámának meghatározása
                 honapok = {
                     'január': 1, 'február': 2, 'március': 3, 'április': 4,
                     'május': 5, 'június': 6, 'július': 7, 'augusztus': 8,
@@ -37,24 +34,17 @@ class UgyeletiBeosztasGenerator:
                 honap_szam = honapok.get(honap)
                 
                 if honap_szam:
-                    # Munkalap beolvasása
                     df = pd.read_excel(excel_buffer, sheet_name=sheet_name)
-                    
-                    # Az első oszlop az orvosok neveit tartalmazza
                     orvos_oszlop = df.columns[0]
                     
-                    # Orvosok és kéréseik feldolgozása
                     for index, row in df.iterrows():
                         orvos_nev = row[orvos_oszlop]
                         if pd.notna(orvos_nev) and isinstance(orvos_nev, str):
-                            # Orvos hozzáadása a nyilvántartáshoz
                             if orvos_nev not in self.orvosok:
                                 self.orvosok[orvos_nev] = {
                                     'nev': orvos_nev,
                                     'ugyeletek_szama': 0
                                 }
-                            
-                            # Kérések feldolgozása
                             for nap in range(1, 32):
                                 if str(nap) in df.columns:
                                     status = row[str(nap)]
@@ -65,10 +55,7 @@ class UgyeletiBeosztasGenerator:
                                             self.keresek[ev][honap_szam] = {}
                                         if orvos_nev not in self.keresek[ev][honap_szam]:
                                             self.keresek[ev][honap_szam][orvos_nev] = {}
-                                        
                                         self.keresek[ev][honap_szam][orvos_nev][nap] = status
-            
-            # Excel buffer lezárása
             excel_buffer.close()
             return True
             
@@ -86,33 +73,28 @@ class UgyeletiBeosztasGenerator:
                 continue
                 
             try:
-                # Szöveg szétbontása
                 szavak = sor.strip().split()
                 if len(szavak) < 2:
                     continue
                 
-                # Név feldolgozása (első szó vagy Dr.-ral kezdődő rész)
                 nev_vege = 1
                 if szavak[0].startswith('Dr'):
                     nev_vege = 2
                 orvos_nev = ' '.join(szavak[:nev_vege])
                 
-                # Dátum feldolgozása
                 datum_kezdet = None
                 datum_veg = None
                 datum_index = nev_vege
                 
-                # Dátumtartomány keresése
                 tartomany_match = None
                 for i, szo in enumerate(szavak[datum_index:], datum_index):
                     if "között" in szo or "-" in szo:
                         tartomany_text = ' '.join(szavak[datum_index:i+2])
                         mintak = [
-                            r'(\d{1,2})[.-](\d{1,2})',  # "22-28" formátum
-                            r'(\d{1,2})\s*(?:és|-)?\s*(\d{1,2})\s+között',  # "22 és 28 között" formátum
-                            r'(\d{4})[.-](\d{1,2})[.-](\d{1,2})\s*(?:és|-)?\s*(\d{4})[.-](\d{1,2})[.-](\d{1,2})'  # teljes dátum tartomány
+                            r'(\d{1,2})[.-](\d{1,2})',
+                            r'(\d{1,2})\s*(?:és|-)?\s*(\d{1,2})\s+között',
+                            r'(\d{4})[.-](\d{1,2})[.-](\d{1,2})\s*(?:és|-)?\s*(\d{4})[.-](\d{1,2})[.-](\d{1,2})'
                         ]
-                        
                         for minta in mintak:
                             match = re.search(minta, tartomany_text)
                             if match:
@@ -122,7 +104,6 @@ class UgyeletiBeosztasGenerator:
                         if tartomany_match:
                             break
                 
-                # Ha találtunk tartományt
                 if tartomany_match:
                     honapok = {
                         'január': 1, 'február': 2, 'március': 3, 'április': 4,
@@ -131,7 +112,6 @@ class UgyeletiBeosztasGenerator:
                         'jan': 1, 'feb': 2, 'már': 3, 'ápr': 4, 'máj': 5, 'jún': 6,
                         'júl': 7, 'aug': 8, 'szept': 9, 'okt': 10, 'nov': 11, 'dec': 12
                     }
-                    
                     honap = None
                     ev = datetime.now().year
                     for szo in szavak[:datum_index]:
@@ -143,12 +123,12 @@ class UgyeletiBeosztasGenerator:
                     if honap is None:
                         raise ValueError("Nem található hónap megjelölés")
                     
-                    if len(tartomany_match.groups()) == 2:  # Csak napok vannak megadva
+                    if len(tartomany_match.groups()) == 2:
                         nap_kezdet = int(tartomany_match.group(1))
                         nap_veg = int(tartomany_match.group(2))
                         datum_kezdet = datetime(ev, honap, nap_kezdet)
                         datum_veg = datetime(ev, honap, nap_veg)
-                    elif len(tartomany_match.groups()) == 6:  # Teljes dátumok
+                    elif len(tartomany_match.groups()) == 6:
                         datum_kezdet = datetime(
                             int(tartomany_match.group(1)),
                             int(tartomany_match.group(2)),
@@ -159,8 +139,6 @@ class UgyeletiBeosztasGenerator:
                             int(tartomany_match.group(5)),
                             int(tartomany_match.group(6))
                         )
-                
-                # Ha nincs tartomány, egyszerű dátum keresése
                 else:
                     datum_kezdet = self._parse_simple_date(szavak[datum_index:])
                     if datum_kezdet:
@@ -170,14 +148,12 @@ class UgyeletiBeosztasGenerator:
                     st.warning(f"Nem sikerült feldolgozni a dátumot ebben a sorban: {sor}")
                     continue
                 
-                # Indok feldolgozása (a maradék szöveg)
                 indok_szavak = []
                 for szo in szavak[datum_index+1:]:
                     if not any(k in szo.lower() for k in ['között', 'és']):
                         indok_szavak.append(szo)
                 indok = ' '.join(indok_szavak) if indok_szavak else 'nem elérhető'
                 
-                # Kivételek hozzáadása a tartomány minden napjára
                 aktualis_datum = datum_kezdet
                 while aktualis_datum <= datum_veg:
                     self.felhasznaloi_kivetelek.append((
@@ -203,21 +179,18 @@ class UgyeletiBeosztasGenerator:
         
         try:
             for i, szo in enumerate(szavak):
-                # ÉÉÉÉ-HH-NN vagy ÉÉÉÉ.HH.NN formátum
                 try:
                     datum_str = szo.replace('.', '-')
                     return datetime.strptime(datum_str, '%Y-%m-%d')
                 except ValueError:
                     pass
                 
-                # NN-HH-ÉÉÉÉ vagy NN.HH.ÉÉÉÉ formátum
                 try:
                     datum_str = szo.replace('.', '-')
                     return datetime.strptime(datum_str, '%d-%m-%Y')
                 except ValueError:
                     pass
                 
-                # Magyar hónapnév formátum
                 if i + 2 < len(szavak):
                     try:
                         ev = int(szavak[i])
@@ -241,28 +214,22 @@ class UgyeletiBeosztasGenerator:
         
         elerheto = []
         for orvos in self.orvosok:
-            # Ellenőrizzük a felhasználói kivételeket
             kivetel_talalat = False
             for kivetel in self.felhasznaloi_kivetelek:
                 if kivetel[0] == orvos and kivetel[1] == datum_str:
                     kivetel_talalat = True
                     break
-            
             if kivetel_talalat:
                 continue
-            
-            # Ellenőrizzük az Excel-ben megadott kéréseket
             if (ev in self.keresek and 
                 honap in self.keresek[ev] and 
                 orvos in self.keresek[ev][honap] and 
                 nap in self.keresek[ev][honap][orvos]):
-                
                 status = self.keresek[ev][honap][orvos][nap]
                 if status not in ["Szabadság", "Ne ügyeljen"]:
                     elerheto.append(orvos)
             else:
                 elerheto.append(orvos)
-                
         return elerheto
     
     def beosztas_generalas(self, ev, honap):
@@ -279,7 +246,6 @@ class UgyeletiBeosztasGenerator:
                 beosztas[datum.strftime('%Y-%m-%d')] = []
                 continue
             
-            # Két orvos kiválasztása
             valasztott_orvosok = []
             for _ in range(2):
                 if elerheto_orvosok:
@@ -299,7 +265,9 @@ def main():
     st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
     st.title("Ügyeleti Beosztás Generáló")
     
-    if 'generator' not in st.session_state:
+    # Ellenőrizzük, hogy a session state-ben lévő generator objektum helyes-e,
+    # ha nincs, vagy nem rendelkezik az excel_beolvasas metódussal, akkor új példányt készítünk.
+    if 'generator' not in st.session_state or not hasattr(st.session_state.generator, 'excel_beolvasas'):
         st.session_state.generator = UgyeletiBeosztasGenerator()
     
     feltoltott_file = st.file_uploader("Ügyeleti kérések Excel feltöltése", type=["xlsx"])
