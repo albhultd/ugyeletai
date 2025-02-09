@@ -10,7 +10,7 @@ class UgyeletiBeosztasGenerator:
         self.orvosok = {}
         self.keresek = {}  # {év: {hónap: {orvos: {nap: státusz}}}}
         self.felhasznaloi_kivetelek = {}  # {orvos: {datum: indok}}
-        
+
     def excel_beolvasas(self, file_content):
         """Excel tartalom feldolgozása memóriából"""
         try:
@@ -20,7 +20,7 @@ class UgyeletiBeosztasGenerator:
             
             # Alapértelmezett orvosok hozzáadása (példa)
             default_orvosok = ["Dr. Nagy János", "Dr. Kiss Péter", "Dr. Kovács Anna", 
-                             "Dr. Szabó István", "Dr. Tóth Mária", "Dr. Horváth Béla"]
+                                "Dr. Szabó István", "Dr. Tóth Mária", "Dr. Horváth Béla"]
             for orvos in default_orvosok:
                 if orvos not in self.orvosok:
                     self.orvosok[orvos] = {
@@ -47,36 +47,44 @@ class UgyeletiBeosztasGenerator:
                 honap_szam = honapok.get(honap)
                 
                 if honap_szam:
-                    # Munkalap beolvasása
-                    df = pd.read_excel(excel_buffer, sheet_name=sheet_name)
+                    # Munkalap beolvasása az ExcelFile objektumból
+                    df = pd.read_excel(xls, sheet_name=sheet_name)
                     
                     # Az első oszlop az orvosok neveit tartalmazza
                     orvos_oszlop = df.columns[0]
                     
                     # Orvosok és kéréseik feldolgozása
                     for index, row in df.iterrows():
-                        orvos_nev = row[orvos_oszlop]
-                        if pd.notna(orvos_nev) and isinstance(orvos_nev, str):
-                            # Orvos hozzáadása a nyilvántartáshoz
-                            if orvos_nev not in self.orvosok:
-                                self.orvosok[orvos_nev] = {
-                                    'nev': orvos_nev,
-                                    'ugyeletek_szama': 0
-                                }
-                            
-                            # Kérések feldolgozása
-                            for nap in range(1, 32):
-                                if str(nap) in df.columns:
-                                    status = row[str(nap)]
-                                    if pd.notna(status):
-                                        if ev not in self.keresek:
-                                            self.keresek[ev] = {}
-                                        if honap_szam not in self.keresek[ev]:
-                                            self.keresek[ev][honap_szam] = {}
-                                        if orvos_nev not in self.keresek[ev][honap_szam]:
-                                            self.keresek[ev][honap_szam][orvos_nev] = {}
-                                        
-                                        self.keresek[ev][honap_szam][orvos_nev][nap] = status
+                        # Az orvos nevet stringgé alakítjuk és levágjuk a fölösleges szóközöket
+                        orvos_nev = str(row[orvos_oszlop]).strip()
+                        if not orvos_nev or not isinstance(orvos_nev, str):
+                            continue
+
+                        # Opcionális: ha a név túl rövid (pl. csak 'D' vagy 'R'), figyelmeztetés
+                        if len(orvos_nev) < 3:
+                            st.warning(f"A beolvasott orvos neve '{orvos_nev}' túl rövidnek tűnik. "
+                                       "Ellenőrizd az input fájl formátumát!")
+                        
+                        # Orvos hozzáadása a nyilvántartáshoz
+                        if orvos_nev not in self.orvosok:
+                            self.orvosok[orvos_nev] = {
+                                'nev': orvos_nev,
+                                'ugyeletek_szama': 0
+                            }
+                        
+                        # Kérések feldolgozása
+                        for nap in range(1, 32):
+                            if str(nap) in df.columns:
+                                status = row[str(nap)]
+                                if pd.notna(status):
+                                    if ev not in self.keresek:
+                                        self.keresek[ev] = {}
+                                    if honap_szam not in self.keresek[ev]:
+                                        self.keresek[ev][honap_szam] = {}
+                                    if orvos_nev not in self.keresek[ev][honap_szam]:
+                                        self.keresek[ev][honap_szam][orvos_nev] = {}
+                                    
+                                    self.keresek[ev][honap_szam][orvos_nev][nap] = status
             
             # Excel buffer törlése
             excel_buffer.close()
@@ -205,7 +213,7 @@ class UgyeletiBeosztasGenerator:
             except Exception as e:
                 st.warning(f"Hiba a sor feldolgozása során: {sor} - {str(e)}")
                 continue
-    
+
     def _parse_simple_date(self, szavak):
         """Egyszerű dátum feldolgozása"""
         honapok = {
@@ -275,7 +283,7 @@ class UgyeletiBeosztasGenerator:
         return elerheto
 
     def get_kivetelek_lista(self):
-        """Visszaadja a kivételek listáját feldolgozható formában"""
+        """Visszaadja a kivételek listáját feldolgozható formában (rendezve)"""
         kivetelek_lista = []
         for orvos, kivetelek in self.felhasznaloi_kivetelek.items():
             for datum, indok in kivetelek.items():
@@ -316,18 +324,6 @@ class UgyeletiBeosztasGenerator:
         
         return beosztas
 
-    def get_kivetelek_lista(self):
-        """Visszaadja a kivételek listáját feldolgozható formában"""
-        kivetelek_lista = []
-        for orvos, kivetelek in self.felhasznaloi_kivetelek.items():
-            for datum, indok in kivetelek.items():
-                kivetelek_lista.append({
-                    'Orvos': orvos,
-                    'Dátum': datum,
-                    'Indok': indok
-                })
-        return kivetelek_lista
-
 def main():
     st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
     st.title("Ügyeleti Beosztás Generáló")
@@ -367,7 +363,7 @@ def main():
                 
                 beosztas = st.session_state.generator.beosztas_generalas(ev, honap)
                 
-                # Eredmények megjelenítése módosítva két orvoshoz
+                # Eredmények megjelenítése két orvoshoz
                 st.subheader("Generált beosztás")
                 beosztas_lista = []
                 for datum, orvosok in beosztas.items():
