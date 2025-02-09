@@ -288,37 +288,7 @@ class UgyeletiBeosztasGenerator:
         return beosztas
 
 def main():
-    # Alap beállítások
-    st.set_page_config(
-        page_title="Ügyeleti Beosztás Generáló",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
-    
-    # CSS a táblázatok formázásához
-    st.markdown("""
-        <style>
-        .stDataFrame {
-            width: 100%;
-        }
-        .stDataFrame > div {
-            max-height: 450px;
-        }
-        .stDataFrame table {
-            width: 100%;
-        }
-        .stDataFrame th {
-            background-color: #2D2D2D;
-            padding: 8px 16px;
-            font-size: 14px;
-        }
-        .stDataFrame td {
-            padding: 8px 16px;
-            font-size: 14px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
+    st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
     st.title("Ügyeleti Beosztás Generáló")
     
     if 'generator' not in st.session_state:
@@ -356,7 +326,7 @@ def main():
                 
                 beosztas = st.session_state.generator.beosztas_generalas(ev, honap)
                 
-                # Beosztás táblázat
+                # Eredmények megjelenítése módosítva két orvoshoz
                 st.subheader("Generált beosztás")
                 beosztas_lista = []
                 for datum, orvosok in beosztas.items():
@@ -369,54 +339,49 @@ def main():
                 beosztas_df = pd.DataFrame(beosztas_lista)
                 beosztas_df = beosztas_df.sort_values('Dátum')
                 
-                # Táblázat megjelenítése
+                # Táblázat megjelenítése indexszel és formázással
                 st.dataframe(
                     beosztas_df,
                     hide_index=False,
+                    use_container_width=True,
                     column_config={
                         "Dátum": st.column_config.DateColumn(
                             "Dátum",
-                            format="YYYY-MM-DD",
-                            width="medium"
+                            format="YYYY-MM-DD"
                         ),
                         "Első Orvos": st.column_config.TextColumn(
                             "Első Orvos",
-                            width="medium"
                         ),
                         "Második Orvos": st.column_config.TextColumn(
                             "Második Orvos",
-                            width="medium"
                         )
-                    },
-                    height=400  # Fix magasság beállítása
+                    }
                 )
                 
-                # Kivételek táblázat
+                # Kivételek megjelenítése
                 if st.session_state.generator.felhasznaloi_kivetelek:
                     st.subheader("Feldolgozott kivételek")
                     kivetelek_df = pd.DataFrame(
                         st.session_state.generator.felhasznaloi_kivetelek,
                         columns=['Orvos', 'Dátum', 'Indok']
                     )
+                    # Kivételek táblázat megjelenítése indexszel és formázással
                     st.dataframe(
                         kivetelek_df,
                         hide_index=False,
+                        use_container_width=True,
                         column_config={
                             "Orvos": st.column_config.TextColumn(
                                 "Orvos",
-                                width="medium"
                             ),
                             "Dátum": st.column_config.DateColumn(
                                 "Dátum",
-                                format="YYYY-MM-DD",
-                                width="medium"
+                                format="YYYY-MM-DD"
                             ),
                             "Indok": st.column_config.TextColumn(
                                 "Indok",
-                                width="large"
                             )
-                        },
-                        height=300
+                        }
                     )
                 
                 # Statisztika táblázat
@@ -429,18 +394,16 @@ def main():
                 st.dataframe(
                     statisztika_df,
                     hide_index=False,
+                    use_container_width=True,
                     column_config={
                         "Orvos": st.column_config.TextColumn(
                             "Orvos",
-                            width="medium"
                         ),
                         "Ügyeletek száma": st.column_config.NumberColumn(
                             "Ügyeletek száma",
-                            help="Az orvos által vállalt ügyeletek száma",
-                            width="small"
+                            help="Az orvos által vállalt ügyeletek száma"
                         )
-                    },
-                    height=200
+                    }
                 )
                 
                 # Excel exportálás
@@ -467,9 +430,6 @@ def main():
         except Exception as e:
             st.error(f"Hiba történt: {str(e)}")
             st.error("Kérlek ellenőrizd az input fájl formátumát")
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
