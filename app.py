@@ -356,7 +356,7 @@ def main():
    # Footer hozzáadása
     st.markdown("""
     <div style='text-align: center; margin-top: 50px;'>
-        created with ❤️ by <a href="mailto:info@albhu.hu">Avni Hafuzi</a>
+         ❤️ készítve - <a href="mailto:info@albhu.hu">Avni Hafuzi</a>
     </div>
     """, unsafe_allow_html=True)
 
