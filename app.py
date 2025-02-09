@@ -352,5 +352,13 @@ def main():
         else:
             st.error("Kérlek ellenőrizd az input fájl formátumát")
 
+
+   # Footer hozzáadása
+    st.markdown("""
+    <div style='text-align: center; margin-top: 50px;'>
+        created with ❤️ by <a href="mailto:info@albhu.hu">Avni Hafuzi</a>
+    </div>
+    """, unsafe_allow_html=True)
+
 if __name__ == "__main__":
     main()
