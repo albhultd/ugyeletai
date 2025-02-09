@@ -354,7 +354,12 @@ def main():
                     columns=['Dátum', 'Orvosok']
                 )
                 beosztas_df = beosztas_df.sort_values('Dátum')
-                st.dataframe(beosztas_df)
+                st.dataframe(
+                    beosztas_df,
+                    height=400,  # Fix magasság
+                    width=800,   # Fix szélesség
+                    hide_index=True  # Index elrejtése
+                )
                 
                 # Kivételek megjelenítése
                 if st.session_state.generator.felhasznaloi_kivetelek:
@@ -363,7 +368,12 @@ def main():
                         st.session_state.generator.felhasznaloi_kivetelek,
                         columns=['Orvos', 'Dátum', 'Indok']
                     )
-                    st.dataframe(kivetelek_df)
+                    st.dataframe(
+                        kivetelek_df,
+                        height=300,
+                        width=800,
+                        hide_index=True
+                    )
                 
                 # Ügyeletek statisztikája
                 st.subheader("Ügyeletek statisztikája")
@@ -372,7 +382,12 @@ def main():
                      for nev, adatok in st.session_state.generator.orvosok.items()],
                     columns=['Orvos', 'Ügyeletek száma']
                 )
-                st.dataframe(statisztika_df)
+                st.dataframe(
+                    statisztika_df,
+                    height=200,
+                    width=600,
+                    hide_index=True
+                )
                 
                 # Excel exportálás memóriában
                 output_buffer = io.BytesIO()
