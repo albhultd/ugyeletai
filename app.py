@@ -10,6 +10,8 @@ class UgyeletiBeosztasGenerator:
         self.orvosok = {}
         self.keresek = {}  # {év: {hónap: {orvos: {nap: státusz}}}}
         self.felhasznaloi_kivetelek = []  # [(orvos, datum, indok)]
+        self.weekday_exceptions = {}   # {orvos: [engedélyezett hét napok (0-6)]}
+        self.pairing_constraints = []  # [(orvos1, orvos2)]
         
     def excel_beolvasas(self, file_content):
         """Excel tartalom feldolgozása memóriából"""
@@ -70,6 +72,8 @@ class UgyeletiBeosztasGenerator:
             
         # Töröljük a meglévő kivételeket az új feldolgozás előtt
         self.felhasznaloi_kivetelek = []
+        self.weekday_exceptions = {}
+        self.pairing_constraints = []
             
         for sor in szoveg.split('\n'):
             if not sor.strip():
@@ -80,11 +84,50 @@ class UgyeletiBeosztasGenerator:
                 if len(szavak) < 2:
                     continue
                 
+                # Az orvos neve (ha "Dr" szerepel, két szóból)
                 nev_vege = 1
                 if szavak[0].startswith('Dr'):
                     nev_vege = 2
                 orvos_nev = ' '.join(szavak[:nev_vege])
                 
+                # Ha a sorban "nem dolgozhat" szerepel, akkor párosítási korlátozásról van szó
+                if "nem dolgozhat" in sor.lower():
+                    # Például: "Dr Kormos Ágnes nem dolgozhat Dr. Forró Tímeával."
+                    match = re.search(r'(?i)nem dolgozhat\s+(Dr\.?\s+\S+\s+\S+)', sor)
+                    if match:
+                        masodik_orvos = match.group(1).strip()
+                        self.pairing_constraints.append((orvos_nev, masodik_orvos))
+                    else:
+                        st.warning(f"Nem sikerült feldolgozni a párosítási kivételt ebben a sorban: {sor}")
+                    continue  # Ebben az esetben nem folytatjuk a további dátumfeldolgozást
+                
+                # Ha a sorban "csak" szerepel, illetve hétnapok (pl. "hétfőn") is, akkor hétköznapi kivételről van szó
+                if "csak" in sor.lower():
+                    # Magyar hét napjainak leképezése
+                    weekday_mapping = {
+                        'hétfő': 0,
+                        'kedd': 1,
+                        'szerda': 2,
+                        'csütörtök': 3,
+                        'péntek': 4,
+                        'szombat': 5,
+                        'vasárnap': 6
+                    }
+                    allowed_weekdays = []
+                    for szo in szavak:
+                        # Tisztítjuk a szót az írásjelektől
+                        clean_word = re.sub(r'[.,]', '', szo).lower()
+                        # Ha a szó végén "-n" szerepel (pl. "hétfőn"), eltávolítjuk
+                        if clean_word.endswith('n'):
+                            base = clean_word[:-1]
+                        else:
+                            base = clean_word
+                        if base in weekday_mapping:
+                            allowed_weekdays.append(weekday_mapping[base])
+                    if allowed_weekdays:
+                        self.weekday_exceptions[orvos_nev] = allowed_weekdays
+                        continue  # Ezt a sort így feldolgoztuk
+                    
                 datum_kezdet = None
                 datum_veg = None
                 datum_index = nev_vege
@@ -217,6 +260,7 @@ class UgyeletiBeosztasGenerator:
         
         elerheto = []
         for orvos in self.orvosok:
+            # Ellenőrizzük a dátumra vonatkozó kivételeket
             kivetel_talalat = False
             for kivetel in self.felhasznaloi_kivetelek:
                 if kivetel[0] == orvos and kivetel[1] == datum_str:
@@ -224,6 +268,11 @@ class UgyeletiBeosztasGenerator:
                     break
             if kivetel_talalat:
                 continue
+            # Ha van hétnapi kivétel, akkor csak az engedélyezett napokon lehet elérhető
+            if orvos in self.weekday_exceptions:
+                allowed = self.weekday_exceptions[orvos]
+                if datum.weekday() not in allowed:
+                    continue
             if (ev in self.keresek and 
                 honap in self.keresek[ev] and 
                 orvos in self.keresek[ev][honap] and 
@@ -234,6 +283,13 @@ class UgyeletiBeosztasGenerator:
             else:
                 elerheto.append(orvos)
         return elerheto
+
+    def can_pair(self, doc1, doc2):
+        """Ellenőrzi, hogy két orvos párosítható-e egymással"""
+        for a, b in self.pairing_constraints:
+            if (doc1 == a and doc2 == b) or (doc1 == b and doc2 == a):
+                return False
+        return True
     
     def beosztas_generalas(self, ev, honap):
         """Havi beosztás generálása két orvossal naponta"""
@@ -242,25 +298,36 @@ class UgyeletiBeosztasGenerator:
         
         for nap in range(1, napok_szama + 1):
             datum = datetime(ev, honap, nap)
+            datum_str = datum.strftime('%Y-%m-%d')
             elerheto_orvosok = self.elerheto_orvosok(datum)
             
             if len(elerheto_orvosok) < 2:
-                st.warning(f"Nem található elegendő elérhető orvos: {datum.strftime('%Y-%m-%d')} (minimum 2 szükséges)")
-                beosztas[datum.strftime('%Y-%m-%d')] = []
+                st.warning(f"Nem található elegendő elérhető orvos: {datum_str} (minimum 2 szükséges)")
+                beosztas[datum_str] = []
                 continue
             
-            valasztott_orvosok = []
-            for _ in range(2):
-                if elerheto_orvosok:
-                    valasztott_orvos = min(
-                        elerheto_orvosok,
-                        key=lambda x: self.orvosok[x]['ugyeletek_szama']
-                    )
-                    valasztott_orvosok.append(valasztott_orvos)
-                    elerheto_orvosok.remove(valasztott_orvos)
-                    self.orvosok[valasztott_orvos]['ugyeletek_szama'] += 1
+            # Első orvos kiválasztása
+            first = min(
+                elerheto_orvosok,
+                key=lambda x: self.orvosok[x]['ugyeletek_szama']
+            )
             
-            beosztas[datum.strftime('%Y-%m-%d')] = valasztott_orvosok
+            # Második orvos kiválasztása, a párosítási korlátozást figyelembe véve
+            remaining = [doc for doc in elerheto_orvosok if doc != first and self.can_pair(first, doc)]
+            if not remaining:
+                st.warning(f"Nincs megfelelő második orvos a {datum_str} napon {first} esetében a párosítási kivétel miatt")
+                beosztas[datum_str] = [first]
+                self.orvosok[first]['ugyeletek_szama'] += 1
+                continue
+            
+            second = min(
+                remaining,
+                key=lambda x: self.orvosok[x]['ugyeletek_szama']
+            )
+            
+            beosztas[datum_str] = [first, second]
+            self.orvosok[first]['ugyeletek_szama'] += 1
+            self.orvosok[second]['ugyeletek_szama'] += 1
         
         return beosztas
 
@@ -287,10 +354,12 @@ def main():
         - Dr. Kiss Péter 2024.01.15 szabadság
         - Nagy Katalin január 20 konferencia
         - Dr. Kovács 2024 február 5 továbbképzés
+        - Dr. Kormos Ágnes csak hétfőn tud dolgozni meg szerdán.
+        - Dr. Kormos Ágnes nem dolgozhat Dr. Forró Tímeával.
         """)
         kivetelek_szoveg = st.text_area(
             "Írja be a kivételeket", 
-            help="Soronként egy kivétel. Írja be az orvos nevét, a dátumot és az indokot."
+            help="Soronként egy kivétel: adja meg az orvos nevét, a dátumot vagy a napokat, illetve az indokot, illetve a párosítási korlátozást."
         )
     
     if feltoltott_file is not None and st.button("Beosztás generálása"):
@@ -316,12 +385,14 @@ def main():
             beosztas_df = beosztas_df.sort_values('Dátum')
             st.dataframe(beosztas_df, width=1000, height=600)
             
-            if st.session_state.generator.felhasznaloi_kivetelek:
+            if st.session_state.generator.felhasznaloi_kivetelek or st.session_state.generator.weekday_exceptions or st.session_state.generator.pairing_constraints:
                 st.subheader("Feldolgozott kivételek")
-                kivetelek_df = pd.DataFrame(
-                    st.session_state.generator.felhasznaloi_kivetelek,
-                    columns=['Orvos', 'Dátum', 'Indok']
-                )
+                extra_info = {
+                    'Kivételes dátumok': st.session_state.generator.felhasznaloi_kivetelek,
+                    'Hétköznapi kivételek': st.session_state.generator.weekday_exceptions,
+                    'Párosítási korlátozások': st.session_state.generator.pairing_constraints
+                }
+                kivetelek_df = pd.DataFrame(dict([(k, pd.Series(v)) for k, v in extra_info.items()]))
                 st.dataframe(kivetelek_df, width=1000, height=600)
             
             st.subheader("Ügyeletek statisztikája")
@@ -338,7 +409,7 @@ def main():
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
                     statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
-                    if st.session_state.generator.felhasznaloi_kivetelek:
+                    if st.session_state.generator.felhasznaloi_kivetelek or st.session_state.generator.weekday_exceptions or st.session_state.generator.pairing_constraints:
                         kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
                 
                 output_buffer.seek(0)
