@@ -76,7 +76,226 @@ class UgyeletiBeosztasGenerator:
             st.error(f"Hiba az Excel beolvasása során: {str(e)}")
             return False
 
-    # [A többi metódus változatlan marad...]
+
+
+    def kivetel_hozzaadas(self, szoveg):
+        """Kivételek feldolgozása a felhasználói szövegből"""
+        if not szoveg:
+            return
+            
+        for sor in szoveg.split('\n'):
+            if not sor.strip():
+                continue
+                
+            try:
+                # Szöveg szétbontása
+                szavak = sor.strip().split()
+                if len(szavak) < 2:
+                    continue
+                
+                # Név feldolgozása (első szó vagy Dr.-ral kezdődő rész)
+                nev_vege = 1
+                if szavak[0].startswith('Dr'):
+                    nev_vege = 2
+                orvos_nev = ' '.join(szavak[:nev_vege])
+                
+                # Dátum feldolgozása
+                datum_kezdet = None
+                datum_veg = None
+                datum_index = nev_vege
+                
+                # Dátumtartomány keresése
+                tartomany_match = None
+                for i, szo in enumerate(szavak[datum_index:], datum_index):
+                    # Tartomány minták keresése
+                    if "között" in szo or "-" in szo:
+                        tartomany_text = ' '.join(szavak[datum_index:i+2])  # Tartomány és környező szavak
+                        # Különböző tartomány formátumok keresése
+                        mintak = [
+                            r'(\d{1,2})[.-](\d{1,2})',  # "22-28" formátum
+                            r'(\d{1,2})\s*(?:és|-)?\s*(\d{1,2})\s+között',  # "22 és 28 között" formátum
+                            r'(\d{4})[.-](\d{1,2})[.-](\d{1,2})\s*(?:és|-)?\s*(\d{4})[.-](\d{1,2})[.-](\d{1,2})'  # teljes dátum tartomány
+                        ]
+                        
+                        for minta in mintak:
+                            match = re.search(minta, tartomany_text)
+                            if match:
+                                tartomany_match = match
+                                datum_index = i
+                                break
+                        if tartomany_match:
+                            break
+                
+                # Ha találtunk tartományt
+                if tartomany_match:
+                    # Hónap keresése a szövegben
+                    honapok = {
+                        'január': 1, 'február': 2, 'március': 3, 'április': 4,
+                        'május': 5, 'június': 6, 'július': 7, 'augusztus': 8,
+                        'szeptember': 9, 'október': 10, 'november': 11, 'december': 12,
+                        'jan': 1, 'feb': 2, 'már': 3, 'ápr': 4, 'máj': 5, 'jún': 6,
+                        'júl': 7, 'aug': 8, 'szept': 9, 'okt': 10, 'nov': 11, 'dec': 12
+                    }
+                    
+                    # Hónap és év keresése
+                    honap = None
+                    ev = datetime.now().year
+                    for szo in szavak[:datum_index]:
+                        if szo.lower() in honapok:
+                            honap = honapok[szo.lower()]
+                        elif szo.isdigit() and len(szo) == 4:
+                            ev = int(szo)
+                    
+                    if honap is None:
+                        raise ValueError("Nem található hónap megjelölés")
+                    
+                    # Tartomány feldolgozása
+                    if len(tartomany_match.groups()) == 2:  # Csak napok vannak megadva
+                        nap_kezdet = int(tartomany_match.group(1))
+                        nap_veg = int(tartomany_match.group(2))
+                        datum_kezdet = datetime(ev, honap, nap_kezdet)
+                        datum_veg = datetime(ev, honap, nap_veg)
+                    elif len(tartomany_match.groups()) == 6:  # Teljes dátumok
+                        datum_kezdet = datetime(
+                            int(tartomany_match.group(1)),
+                            int(tartomany_match.group(2)),
+                            int(tartomany_match.group(3))
+                        )
+                        datum_veg = datetime(
+                            int(tartomany_match.group(4)),
+                            int(tartomany_match.group(5)),
+                            int(tartomany_match.group(6))
+                        )
+                
+                # Ha nincs tartomány, egyszerű dátum keresése
+                else:
+                    datum_kezdet = self._parse_simple_date(szavak[datum_index:])
+                    if datum_kezdet:
+                        datum_veg = datum_kezdet
+                
+                if not datum_kezdet or not datum_veg:
+                    st.warning(f"Nem sikerült feldolgozni a dátumot ebben a sorban: {sor}")
+                    continue
+                
+                # Indok feldolgozása (a maradék szöveg)
+                indok_szavak = []
+                for szo in szavak[datum_index+1:]:
+                    if not any(k in szo.lower() for k in ['között', 'és']):
+                        indok_szavak.append(szo)
+                indok = ' '.join(indok_szavak) if indok_szavak else 'nem elérhető'
+                
+                # Kivételek hozzáadása a tartomány minden napjára
+                aktualis_datum = datum_kezdet
+                while aktualis_datum <= datum_veg:
+                    self.felhasznaloi_kivetelek.append((
+                        orvos_nev,
+                        aktualis_datum.strftime('%Y-%m-%d'),
+                        indok
+                    ))
+                    aktualis_datum += timedelta(days=1)
+                
+            except Exception as e:
+                st.warning(f"Hiba a sor feldolgozása során: {sor} - {str(e)}")
+                continue
+    
+    def _parse_simple_date(self, szavak):
+        """Egyszerű dátum feldolgozása"""
+        honapok = {
+            'január': 1, 'február': 2, 'március': 3, 'április': 4,
+            'május': 5, 'június': 6, 'július': 7, 'augusztus': 8,
+            'szeptember': 9, 'október': 10, 'november': 11, 'december': 12,
+            'jan': 1, 'feb': 2, 'már': 3, 'ápr': 4, 'máj': 5, 'jún': 6,
+            'júl': 7, 'aug': 8, 'szept': 9, 'okt': 10, 'nov': 11, 'dec': 12
+        }
+        
+        try:
+            for i, szo in enumerate(szavak):
+                # ÉÉÉÉ-HH-NN vagy ÉÉÉÉ.HH.NN formátum
+                try:
+                    datum_str = szo.replace('.', '-')
+                    return datetime.strptime(datum_str, '%Y-%m-%d')
+                except ValueError:
+                    pass
+                
+                # NN-HH-ÉÉÉÉ vagy NN.HH.ÉÉÉÉ formátum
+                try:
+                    datum_str = szo.replace('.', '-')
+                    return datetime.strptime(datum_str, '%d-%m-%Y')
+                except ValueError:
+                    pass
+                
+                # Magyar hónapnév formátum
+                if i + 2 < len(szavak):
+                    try:
+                        ev = int(szavak[i])
+                        honap = honapok.get(szavak[i + 1].lower())
+                        nap = int(szavak[i + 2])
+                        if honap:
+                            return datetime(ev, honap, nap)
+                    except (ValueError, KeyError, IndexError):
+                        pass
+        except Exception:
+            return None
+        
+        return None
+
+
+    def elerheto_orvosok(self, datum):
+        """Visszaadja az adott napon elérhető orvosokat"""
+        ev = datum.year
+        honap = datum.month
+        nap = datum.day
+        datum_str = datum.strftime('%Y-%m-%d')
+        
+        elerheto = []
+        for orvos in self.orvosok:
+            # Ellenőrizzük a felhasználói kivételeket
+            kivetel_talalat = False
+            for kivetel in self.felhasznaloi_kivetelek:
+                if kivetel[0] == orvos and kivetel[1] == datum_str:
+                    kivetel_talalat = True
+                    break
+            
+            if kivetel_talalat:
+                continue
+            
+            # Ellenőrizzük az Excel-ben megadott kéréseket
+            if (ev in self.keresek and 
+                honap in self.keresek[ev] and 
+                orvos in self.keresek[ev][honap] and 
+                nap in self.keresek[ev][honap][orvos]):
+                
+                status = self.keresek[ev][honap][orvos][nap]
+                if status not in ["Szabadság", "Ne ügyeljen"]:
+                    elerheto.append(orvos)
+            else:
+                elerheto.append(orvos)
+                
+        return elerheto
+    
+    def beosztas_generalas(self, ev, honap):
+        """Havi beosztás generálása"""
+        napok_szama = calendar.monthrange(ev, honap)[1]
+        beosztas = {}
+        
+        for nap in range(1, napok_szama + 1):
+            datum = datetime(ev, honap, nap)
+            elerheto_orvosok = self.elerheto_orvosok(datum)
+            
+            if not elerheto_orvosok:
+                st.warning(f"Nem található elérhető orvos: {datum.strftime('%Y-%m-%d')}")
+                continue
+            
+            # Válasszuk ki azt az orvost, akinek a legkevesebb ügyelete van
+            valasztott_orvos = min(
+                elerheto_orvosok,
+                key=lambda x: self.orvosok[x]['ugyeletek_szama']
+            )
+            
+            beosztas[datum.strftime('%Y-%m-%d')] = valasztott_orvos
+            self.orvosok[valasztott_orvos]['ugyeletek_szama'] += 1
+        
+        return beosztas
 
 def main():
     st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
@@ -154,24 +373,25 @@ def main():
                 
                 # Excel exportálás memóriában
                 output_buffer = io.BytesIO()
-                with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-                    beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
-                    statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
-                    if st.session_state.generator.felhasznaloi_kivetelek:
-                        kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
-                
-                output_buffer.seek(0)
-                
-                st.download_button(
-                    label="Beosztás letöltése",
-                    data=output_buffer,
-                    file_name=f"ugyeleti_beosztas_{ev}_{honap}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                
-                # Buffer törlése
-                output_buffer.close()
-        
+                try:
+                    with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+                        beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
+                        statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
+                        if st.session_state.generator.felhasznaloi_kivetelek:
+                            kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
+                    
+                    output_buffer.seek(0)
+                    st.download_button(
+                        label="Beosztás letöltése",
+                        data=output_buffer,
+                        file_name=f"ugyeleti_beosztas_{ev}_{honap}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.error(f"Hiba történt az Excel exportálása során: {str(e)}")
+                finally:
+                    output_buffer.close()
+                    
         except Exception as e:
             st.error(f"Hiba történt: {str(e)}")
             st.error("Kérlek ellenőrizd az input fájl formátumát")
