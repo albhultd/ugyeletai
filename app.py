@@ -18,6 +18,16 @@ class UgyeletiBeosztasGenerator:
             excel_buffer = io.BytesIO(file_content)
             xls = pd.ExcelFile(excel_buffer)
             
+            # Alapértelmezett orvosok hozzáadása (példa)
+            default_orvosok = ["Dr. Nagy János", "Dr. Kiss Péter", "Dr. Kovács Anna", 
+                             "Dr. Szabó István", "Dr. Tóth Mária", "Dr. Horváth Béla"]
+            for orvos in default_orvosok:
+                if orvos not in self.orvosok:
+                    self.orvosok[orvos] = {
+                        'nev': orvos,
+                        'ugyeletek_szama': 0
+                    }
+            
             # Munkalapok feldolgozása
             for sheet_name in xls.sheet_names:
                 # Év és hónap meghatározása a munkalap nevéből
@@ -263,6 +273,18 @@ class UgyeletiBeosztasGenerator:
                 elerheto.append(orvos)
                 
         return elerheto
+
+    def get_kivetelek_lista(self):
+        """Visszaadja a kivételek listáját feldolgozható formában"""
+        kivetelek_lista = []
+        for orvos, kivetelek in self.felhasznaloi_kivetelek.items():
+            for datum, indok in kivetelek.items():
+                kivetelek_lista.append({
+                    'Orvos': orvos,
+                    'Dátum': datum,
+                    'Indok': indok
+                })
+        return sorted(kivetelek_lista, key=lambda x: (x['Orvos'], x['Dátum']))
 
     def beosztas_generalas(self, ev, honap):
         """Havi beosztás generálása két orvossal naponta"""
