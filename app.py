@@ -365,7 +365,7 @@ def main():
                 if st.session_state.generator.felhasznaloi_kivetelek:
                     st.subheader("Feldolgozott kivételek")
                     kivetelek_df = pd.DataFrame(
-                        st.session_state.generator.felhasznaloi_kivetelek,
+                        list(set(st.session_state.generator.felhasznaloi_kivetelek)),  # Duplikációk eltávolítása
                         columns=['Orvos', 'Dátum', 'Indok']
                     )
                     st.dataframe(
@@ -396,6 +396,10 @@ def main():
                         beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
                         statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
                         if st.session_state.generator.felhasznaloi_kivetelek:
+                            kivetelek_df = pd.DataFrame(
+                                list(set(st.session_state.generator.felhasznaloi_kivetelek)),  # Duplikációk eltávolítása
+                                columns=['Orvos', 'Dátum', 'Indok']
+                            )
                             kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
                     
                     output_buffer.seek(0)
