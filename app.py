@@ -7,9 +7,9 @@ import io
 
 class UgyeletiBeosztasGenerator:
     def __init__(self):
-        self.orvosok = {}
+        self.orvosok = {}  # {orvosnév: {'nev': orvosnév, 'ugyeletek_szama': számláló}}
         self.keresek = {}  # {év: {hónap: {orvos: {nap: státusz}}}}
-        self.felhasznaloi_kivetelek = []  # [(orvos, datum, indok)]
+        self.felhasznaloi_kivetelek = []  # [(orvos, dátum, indok)]
         
     def excel_beolvasas(self, file_content):
         """Excel tartalom feldolgozása memóriából"""
@@ -76,8 +76,6 @@ class UgyeletiBeosztasGenerator:
             st.error(f"Hiba az Excel beolvasása során: {str(e)}")
             return False
 
-
-
     def kivetel_hozzaadas(self, szoveg):
         """Kivételek feldolgozása a felhasználói szövegből"""
         if not szoveg:
@@ -114,7 +112,7 @@ class UgyeletiBeosztasGenerator:
                         mintak = [
                             r'(\d{1,2})[.-](\d{1,2})',  # "22-28" formátum
                             r'(\d{1,2})\s*(?:és|-)?\s*(\d{1,2})\s+között',  # "22 és 28 között" formátum
-                            r'(\d{4})[.-](\d{1,2})[.-](\d{1,2})\s*(?:és|-)?\s*(\d{4})[.-](\d{1,2})[.-](\d{1,2})'  # teljes dátum tartomány
+                            r'(\d{4})[.-](\d{1,2})[.-](\d{1,2})\s*(?:és|-)?\s*(\d{4})[.-](\d{1,2})[.-](\d{1,2})'  # Teljes dátum tartomány
                         ]
                         
                         for minta in mintak:
@@ -239,9 +237,11 @@ class UgyeletiBeosztasGenerator:
         
         return None
 
-
     def elerheto_orvosok(self, datum):
-        """Visszaadja az adott napon elérhető orvosokat"""
+        """
+        Visszaadja az adott napon elérhető orvosokat,
+        figyelembe véve a felhasználói kivételeket és az Excel-ben megadott kéréseket.
+        """
         ev = datum.year
         honap = datum.month
         nap = datum.day
@@ -274,7 +274,7 @@ class UgyeletiBeosztasGenerator:
         return elerheto
     
     def beosztas_generalas(self, ev, honap):
-        """Havi beosztás generálása"""
+        """Havi beosztás generálása, ahol egy nap két orvosnak kell dolgoznia"""
         napok_szama = calendar.monthrange(ev, honap)[1]
         beosztas = {}
         
@@ -282,18 +282,21 @@ class UgyeletiBeosztasGenerator:
             datum = datetime(ev, honap, nap)
             elerheto_orvosok = self.elerheto_orvosok(datum)
             
-            if not elerheto_orvosok:
-                st.warning(f"Nem található elérhető orvos: {datum.strftime('%Y-%m-%d')}")
+            if len(elerheto_orvosok) < 2:
+                st.warning(f"Nem található két elérhető orvos a(z) {datum.strftime('%Y-%m-%d')} napra!")
                 continue
             
-            # Válasszuk ki azt az orvost, akinek a legkevesebb ügyelete van
-            valasztott_orvos = min(
+            # A két legkevésbé leterhelt orvos kiválasztása
+            valasztott_orvosok = sorted(
                 elerheto_orvosok,
                 key=lambda x: self.orvosok[x]['ugyeletek_szama']
-            )
+            )[:2]
             
-            beosztas[datum.strftime('%Y-%m-%d')] = valasztott_orvos
-            self.orvosok[valasztott_orvos]['ugyeletek_szama'] += 1
+            beosztas[datum.strftime('%Y-%m-%d')] = valasztott_orvosok
+            
+            # Az ügyeletek számának növelése a kiválasztott orvosok esetében
+            for orvos in valasztott_orvosok:
+                self.orvosok[orvos]['ugyeletek_szama'] += 1
         
         return beosztas
 
@@ -305,7 +308,7 @@ def main():
     if 'generator' not in st.session_state:
         st.session_state.generator = UgyeletiBeosztasGenerator()
     
-    # Excel feltöltés
+    # Excel fájl feltöltése
     feltoltott_file = st.file_uploader("Ügyeleti kérések Excel feltöltése", type=["xlsx"])
     
     # Dátum választás
@@ -313,9 +316,9 @@ def main():
     with col1:
         ev = st.selectbox("Év", [2024, 2025])
     with col2:
-        honap = st.selectbox("Hónap", range(1, 13))
+        honap = st.selectbox("Hónap", list(range(1, 13)))
     
-    # Kivételek kezelése
+    # Kivételek megadása
     with st.expander("További kivételek megadása"):
         st.write("""
         Itt adhat meg további kivételeket szabad szöveggel. Például:
@@ -337,7 +340,7 @@ def main():
             if st.session_state.generator.excel_beolvasas(file_content):
                 st.success("Excel adatok sikeresen beolvasva!")
                 
-                # Kivételek feldolgozása
+                # Kivételek feldolgozása, ha vannak
                 if kivetelek_szoveg:
                     st.session_state.generator.kivetel_hozzaadas(kivetelek_szoveg)
                 
@@ -347,8 +350,8 @@ def main():
                 # Eredmények megjelenítése
                 st.subheader("Generált beosztás")
                 beosztas_df = pd.DataFrame(
-                    [(datum, orvos) for datum, orvos in beosztas.items()],
-                    columns=['Dátum', 'Orvos']
+                    [(datum, ", ".join(orvosok)) for datum, orvosok in beosztas.items()],
+                    columns=['Dátum', 'Orvosok']
                 )
                 beosztas_df = beosztas_df.sort_values('Dátum')
                 st.dataframe(beosztas_df)
@@ -362,7 +365,7 @@ def main():
                     )
                     st.dataframe(kivetelek_df)
                 
-                # Statisztika
+                # Ügyeletek statisztikája
                 st.subheader("Ügyeletek statisztikája")
                 statisztika_df = pd.DataFrame(
                     [(nev, adatok['ugyeletek_szama']) 
