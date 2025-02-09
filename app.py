@@ -107,11 +107,12 @@ class UgyeletiBeosztasGenerator:
                 for i, szo in enumerate(szavak[datum_index:], datum_index):
                     # Tartomány minták keresése
                     if "között" in szo or "-" in szo:
-                        tartomany_text = ' '.join(szavak[datum_index:i+2])
+                        tartomany_text = ' '.join(szavak[datum_index:i+2])  # Tartomány és környező szavak
+                        # Különböző tartomány formátumok keresése
                         mintak = [
-                            r'(\d{1,2})[.-](\d{1,2})',
-                            r'(\d{1,2})\s*(?:és|-)?\s*(\d{1,2})\s+között',
-                            r'(\d{4})[.-](\d{1,2})[.-](\d{1,2})\s*(?:és|-)?\s*(\d{4})[.-](\d{1,2})[.-](\d{1,2})'
+                            r'(\d{1,2})[.-](\d{1,2})',  # "22-28" formátum
+                            r'(\d{1,2})\s*(?:és|-)?\s*(\d{1,2})\s+között',  # "22 és 28 között" formátum
+                            r'(\d{4})[.-](\d{1,2})[.-](\d{1,2})\s*(?:és|-)?\s*(\d{4})[.-](\d{1,2})[.-](\d{1,2})'  # teljes dátum tartomány
                         ]
                         
                         for minta in mintak:
@@ -123,7 +124,9 @@ class UgyeletiBeosztasGenerator:
                         if tartomany_match:
                             break
                 
+                # Ha találtunk tartományt
                 if tartomany_match:
+                    # Hónap keresése a szövegben
                     honapok = {
                         'január': 1, 'február': 2, 'március': 3, 'április': 4,
                         'május': 5, 'június': 6, 'július': 7, 'augusztus': 8,
@@ -132,6 +135,7 @@ class UgyeletiBeosztasGenerator:
                         'júl': 7, 'aug': 8, 'szept': 9, 'okt': 10, 'nov': 11, 'dec': 12
                     }
                     
+                    # Hónap és év keresése
                     honap = None
                     ev = datetime.now().year
                     for szo in szavak[:datum_index]:
@@ -143,12 +147,13 @@ class UgyeletiBeosztasGenerator:
                     if honap is None:
                         raise ValueError("Nem található hónap megjelölés")
                     
-                    if len(tartomany_match.groups()) == 2:
+                    # Tartomány feldolgozása
+                    if len(tartomany_match.groups()) == 2:  # Csak napok vannak megadva
                         nap_kezdet = int(tartomany_match.group(1))
                         nap_veg = int(tartomany_match.group(2))
                         datum_kezdet = datetime(ev, honap, nap_kezdet)
                         datum_veg = datetime(ev, honap, nap_veg)
-                    elif len(tartomany_match.groups()) == 6:
+                    elif len(tartomany_match.groups()) == 6:  # Teljes dátumok
                         datum_kezdet = datetime(
                             int(tartomany_match.group(1)),
                             int(tartomany_match.group(2)),
@@ -159,6 +164,8 @@ class UgyeletiBeosztasGenerator:
                             int(tartomany_match.group(5)),
                             int(tartomany_match.group(6))
                         )
+                
+                # Ha nincs tartomány, egyszerű dátum keresése
                 else:
                     datum_kezdet = self._parse_simple_date(szavak[datum_index:])
                     if datum_kezdet:
@@ -168,14 +175,14 @@ class UgyeletiBeosztasGenerator:
                     st.warning(f"Nem sikerült feldolgozni a dátumot ebben a sorban: {sor}")
                     continue
                 
-                # Indok feldolgozása
+                # Indok feldolgozása (a maradék szöveg)
                 indok_szavak = []
                 for szo in szavak[datum_index+1:]:
                     if not any(k in szo.lower() for k in ['között', 'és']):
                         indok_szavak.append(szo)
                 indok = ' '.join(indok_szavak) if indok_szavak else 'nem elérhető'
                 
-                # Kivételek hozzáadása
+                # Kivételek hozzáadása a tartomány minden napjára
                 aktualis_datum = datum_kezdet
                 while aktualis_datum <= datum_veg:
                     self.felhasznaloi_kivetelek.append((
@@ -188,7 +195,7 @@ class UgyeletiBeosztasGenerator:
             except Exception as e:
                 st.warning(f"Hiba a sor feldolgozása során: {sor} - {str(e)}")
                 continue
-
+    
     def _parse_simple_date(self, szavak):
         """Egyszerű dátum feldolgozása"""
         honapok = {
@@ -201,18 +208,21 @@ class UgyeletiBeosztasGenerator:
         
         try:
             for i, szo in enumerate(szavak):
+                # ÉÉÉÉ-HH-NN vagy ÉÉÉÉ.HH.NN formátum
                 try:
                     datum_str = szo.replace('.', '-')
                     return datetime.strptime(datum_str, '%Y-%m-%d')
                 except ValueError:
                     pass
                 
+                # NN-HH-ÉÉÉÉ vagy NN.HH.ÉÉÉÉ formátum
                 try:
                     datum_str = szo.replace('.', '-')
                     return datetime.strptime(datum_str, '%d-%m-%Y')
                 except ValueError:
                     pass
                 
+                # Magyar hónapnév formátum
                 if i + 2 < len(szavak):
                     try:
                         ev = int(szavak[i])
@@ -236,6 +246,7 @@ class UgyeletiBeosztasGenerator:
         
         elerheto = []
         for orvos in self.orvosok:
+            # Ellenőrizzük a felhasználói kivételeket
             kivetel_talalat = False
             for kivetel in self.felhasznaloi_kivetelek:
                 if kivetel[0] == orvos and kivetel[1] == datum_str:
@@ -245,6 +256,7 @@ class UgyeletiBeosztasGenerator:
             if kivetel_talalat:
                 continue
             
+            # Ellenőrizzük az Excel-ben megadott kéréseket
             if (ev in self.keresek and 
                 honap in self.keresek[ev] and 
                 orvos in self.keresek[ev][honap] and 
@@ -269,6 +281,7 @@ class UgyeletiBeosztasGenerator:
             
             if len(elerheto_orvosok) < 2:
                 st.warning(f"Nem található elegendő elérhető orvos: {datum.strftime('%Y-%m-%d')} (minimum 2 szükséges)")
+                beosztas[datum.strftime('%Y-%m-%d')] = []
                 continue
             
             # Két orvos kiválasztása
@@ -338,82 +351,33 @@ def main():
                 
                 beosztas_df = pd.DataFrame(beosztas_lista)
                 beosztas_df = beosztas_df.sort_values('Dátum')
+                # A táblázat méretének módosítása: szélesség=1000, magasság=600 pixel
+                st.dataframe(beosztas_df, width=1000, height=600)
                 
-                # Táblázat megjelenítése indexszel és formázással
-                st.dataframe(
-                    beosztas_df,
-                    hide_index=False,
-                    use_container_width=True,
-                    column_config={
-                        "Dátum": st.column_config.DateColumn(
-                            "Dátum",
-                            format="YYYY-MM-DD"
-                        ),
-                        "Első Orvos": st.column_config.TextColumn(
-                            "Első Orvos",
-                        ),
-                        "Második Orvos": st.column_config.TextColumn(
-                            "Második Orvos",
-                        )
-                    }
-                )
-                
-                # Kivételek megjelenítése
                 if st.session_state.generator.felhasznaloi_kivetelek:
                     st.subheader("Feldolgozott kivételek")
                     kivetelek_df = pd.DataFrame(
                         st.session_state.generator.felhasznaloi_kivetelek,
                         columns=['Orvos', 'Dátum', 'Indok']
                     )
-                    # Kivételek táblázat megjelenítése indexszel és formázással
-                    st.dataframe(
-                        kivetelek_df,
-                        hide_index=False,
-                        use_container_width=True,
-                        column_config={
-                            "Orvos": st.column_config.TextColumn(
-                                "Orvos",
-                            ),
-                            "Dátum": st.column_config.DateColumn(
-                                "Dátum",
-                                format="YYYY-MM-DD"
-                            ),
-                            "Indok": st.column_config.TextColumn(
-                                "Indok",
-                            )
-                        }
-                    )
+                    st.dataframe(kivetelek_df, width=1000, height=600)
                 
-                # Statisztika táblázat
                 st.subheader("Ügyeletek statisztikája")
                 statisztika_df = pd.DataFrame(
                     [(nev, adatok['ugyeletek_szama']) 
                      for nev, adatok in st.session_state.generator.orvosok.items()],
                     columns=['Orvos', 'Ügyeletek száma']
                 )
-                st.dataframe(
-                    statisztika_df,
-                    hide_index=False,
-                    use_container_width=True,
-                    column_config={
-                        "Orvos": st.column_config.TextColumn(
-                            "Orvos",
-                        ),
-                        "Ügyeletek száma": st.column_config.NumberColumn(
-                            "Ügyeletek száma",
-                            help="Az orvos által vállalt ügyeletek száma"
-                        )
-                    }
-                )
+                st.dataframe(statisztika_df, width=600, height=300)
                 
                 # Excel exportálás
                 output_buffer = io.BytesIO()
                 try:
                     with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-                        beosztas_df.to_excel(writer, sheet_name='Beosztás', index=True)
-                        statisztika_df.to_excel(writer, sheet_name='Statisztika', index=True)
+                        beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
+                        statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
                         if st.session_state.generator.felhasznaloi_kivetelek:
-                            kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=True)
+                            kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
                     
                     output_buffer.seek(0)
                     st.download_button(
