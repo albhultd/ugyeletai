@@ -302,8 +302,9 @@ def main():
     st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
     st.title("Ügyeleti Beosztás Generáló")
     
-    if 'generator' not in st.session_state:
+    if 'generator' not in st.session_state or st.session_state.get('reset_needed', False):
         st.session_state.generator = UgyeletiBeosztasGenerator()
+        st.session_state.reset_needed = False
     
     feltoltott_file = st.file_uploader("Ügyeleti kérések Excel feltöltése", type=["xlsx"])
     
@@ -324,6 +325,12 @@ def main():
             "Írja be a kivételeket", 
             help="Soronként egy kivétel. Írja be az orvos nevét, a dátumot és az indokot."
         )
+    
+    if feltoltott_file is not None:
+        file_hash = hash(feltoltott_file.getvalue())
+        if 'last_file_hash' not in st.session_state or st.session_state.last_file_hash != file_hash:
+            st.session_state.generator = UgyeletiBeosztasGenerator()
+            st.session_state.last_file_hash = file_hash
     
     if feltoltott_file is not None and st.button("Beosztás generálása"):
         try:
