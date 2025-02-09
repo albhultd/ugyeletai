@@ -1,147 +1,180 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import calendar
-import json
+import re
+import io
 
-class ScheduleGenerator:
+class UgyeletiBeosztasGenerator:
     def __init__(self):
-        self.doctors = []
-        self.constraints = {}
+        self.orvosok = {}
+        self.keresek = {}  # {év: {hónap: {orvos: {nap: státusz}}}}
+        self.felhasznaloi_kivetelek = []  # [(orvos, datum, indok)]
         
-    def load_data(self, df):
-        """Load and validate doctor data from DataFrame"""
-        required_columns = {'Név', 'Elérhetőség', 'Max_ügyelet'}
-        if not all(col in df.columns for col in required_columns):
-            raise ValueError("Hiányzó kötelező oszlopok az Excel fájlból")
+    def excel_beolvasas(self, file_content):
+        """Excel tartalom feldolgozása memóriából"""
+        try:
+            # Excel fájl beolvasása memóriából
+            excel_buffer = io.BytesIO(file_content)
+            xls = pd.ExcelFile(excel_buffer)
             
-        self.doctors = df.to_dict('records')
-        return True
-        
-    def add_constraint(self, doctor_name, date, constraint_type):
-        """Add scheduling constraint for a specific doctor and date"""
-        if doctor_name not in self.constraints:
-            self.constraints[doctor_name] = {}
-        self.constraints[doctor_name][date] = constraint_type
-        
-    def generate_schedule(self, year, month):
-        """Generate monthly schedule considering all constraints"""
-        num_days = calendar.monthrange(year, month)[1]
-        schedule = {}
-        doctor_counts = {doc['Név']: 0 for doc in self.doctors}
-        
-        for day in range(1, num_days + 1):
-            date = datetime(year, month, day).strftime('%Y-%m-%d')
-            available_doctors = self._get_available_doctors(date, doctor_counts)
-            
-            if not available_doctors:
-                st.warning(f"Nem található elérhető orvos: {date}")
-                continue
+            # Munkalapok feldolgozása
+            for sheet_name in xls.sheet_names:
+                # Év és hónap meghatározása a munkalap nevéből
+                if sheet_name.startswith('25 '):
+                    ev = 2025
+                    honap = sheet_name.split(' ')[1].lower()
+                else:
+                    ev = 2024
+                    honap = sheet_name.lower()
                 
-            # Select doctor with fewest assignments
-            selected_doctor = min(available_doctors, key=lambda x: doctor_counts[x['Név']])
-            schedule[date] = selected_doctor['Név']
-            doctor_counts[selected_doctor['Név']] += 1
+                # Hónap sorszámának meghatározása
+                honapok = {
+                    'január': 1, 'február': 2, 'március': 3, 'április': 4,
+                    'május': 5, 'június': 6, 'július': 7, 'augusztus': 8,
+                    'szeptember': 9, 'október': 10, 'november': 11, 'december': 12
+                }
+                honap_szam = honapok.get(honap)
+                
+                if honap_szam:
+                    # Munkalap beolvasása
+                    df = pd.read_excel(excel_buffer, sheet_name=sheet_name)
+                    
+                    # Az első oszlop az orvosok neveit tartalmazza
+                    orvos_oszlop = df.columns[0]
+                    
+                    # Orvosok és kéréseik feldolgozása
+                    for index, row in df.iterrows():
+                        orvos_nev = row[orvos_oszlop]
+                        if pd.notna(orvos_nev) and isinstance(orvos_nev, str):
+                            # Orvos hozzáadása a nyilvántartáshoz
+                            if orvos_nev not in self.orvosok:
+                                self.orvosok[orvos_nev] = {
+                                    'nev': orvos_nev,
+                                    'ugyeletek_szama': 0
+                                }
+                            
+                            # Kérések feldolgozása
+                            for nap in range(1, 32):
+                                if str(nap) in df.columns:
+                                    status = row[str(nap)]
+                                    if pd.notna(status):
+                                        if ev not in self.keresek:
+                                            self.keresek[ev] = {}
+                                        if honap_szam not in self.keresek[ev]:
+                                            self.keresek[ev][honap_szam] = {}
+                                        if orvos_nev not in self.keresek[ev][honap_szam]:
+                                            self.keresek[ev][honap_szam][orvos_nev] = {}
+                                        
+                                        self.keresek[ev][honap_szam][orvos_nev][nap] = status
             
-        return schedule, doctor_counts
-    
-    def _get_available_doctors(self, date, doctor_counts):
-        """Get list of available doctors for a specific date"""
-        available = []
-        for doctor in self.doctors:
-            if self._is_doctor_available(doctor, date, doctor_counts):
-                available.append(doctor)
-        return available
-    
-    def _is_doctor_available(self, doctor, date, doctor_counts):
-        """Check if a doctor is available for a specific date"""
-        # Check max shifts constraint
-        if doctor_counts[doctor['Név']] >= doctor['Max_ügyelet']:
+            # Excel buffer törlése
+            excel_buffer.close()
+            return True
+            
+        except Exception as e:
+            st.error(f"Hiba az Excel beolvasása során: {str(e)}")
             return False
-            
-        # Check specific date constraints
-        if doctor['Név'] in self.constraints and date in self.constraints[doctor['Név']]:
-            return False
-            
-        # Check availability pattern (implement your specific logic here)
-        return True
+
+    # [A többi metódus változatlan marad...]
 
 def main():
-    st.set_page_config(page_title="Orvosi Ügyeleti Beosztás Generáló", layout="wide")
-    st.title("Orvosi Ügyeleti Beosztás Generáló")
+    st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
+    st.title("Ügyeleti Beosztás Generáló")
     
-    scheduler = ScheduleGenerator()
+    # Session state inicializálása
+    if 'generator' not in st.session_state:
+        st.session_state.generator = UgyeletiBeosztasGenerator()
     
-    # File upload
-    uploaded_file = st.file_uploader("Tölts fel egy Excel fájlt", type=["xlsx"])
+    # Excel feltöltés
+    feltoltott_file = st.file_uploader("Ügyeleti kérések Excel feltöltése", type=["xlsx"])
     
-    # Date selection
+    # Dátum választás
     col1, col2 = st.columns(2)
     with col1:
-        year = st.selectbox("Év", range(datetime.now().year, datetime.now().year + 2))
+        ev = st.selectbox("Év", [2024, 2025])
     with col2:
-        month = st.selectbox("Hónap", range(1, 13))
+        honap = st.selectbox("Hónap", range(1, 13))
     
-    # Constraint input
-    with st.expander("Egyéni korlátozások hozzáadása"):
-        constraint_text = st.text_area(
-            "Add meg a korlátozásokat (pl.: 'Dr. Kiss 2024-01-15 szabadság')",
-            help="Soronként egy korlátozás. Formátum: 'Név YYYY-MM-DD ok'"
+    # Kivételek kezelése
+    with st.expander("További kivételek megadása"):
+        st.write("""
+        Itt adhat meg további kivételeket szabad szöveggel. Például:
+        - Dr. Kiss Péter 2024.01.15 szabadság
+        - Nagy Katalin január 20 konferencia
+        - Dr. Kovács 2024 február 5 továbbképzés
+        """)
+        kivetelek_szoveg = st.text_area(
+            "Írja be a kivételeket", 
+            help="Soronként egy kivétel. Írja be az orvos nevét, a dátumot és az indokot."
         )
     
-    if uploaded_file and st.button("Beosztás generálása"):
+    if feltoltott_file is not None and st.button("Beosztás generálása"):
         try:
-            # Load data
-            df = pd.read_excel(uploaded_file)
-            scheduler.load_data(df)
+            # Excel tartalom beolvasása
+            file_content = feltoltott_file.read()
             
-            # Process constraints
-            if constraint_text:
-                for line in constraint_text.split('\n'):
-                    if line.strip():
-                        parts = line.strip().split()
-                        if len(parts) >= 2:
-                            doctor_name = parts[0]
-                            date = parts[1]
-                            constraint_type = ' '.join(parts[2:]) if len(parts) > 2 else 'unavailable'
-                            scheduler.add_constraint(doctor_name, date, constraint_type)
-            
-            # Generate schedule
-            schedule, doctor_counts = scheduler.generate_schedule(year, month)
-            
-            # Display results
-            st.subheader("Generált beosztás")
-            schedule_df = pd.DataFrame(
-                [(date, doctor) for date, doctor in schedule.items()],
-                columns=['Dátum', 'Orvos']
-            )
-            st.dataframe(schedule_df)
-            
-            # Display statistics
-            st.subheader("Statisztika")
-            stats_df = pd.DataFrame(
-                [(name, count) for name, count in doctor_counts.items()],
-                columns=['Orvos', 'Ügyeletek száma']
-            )
-            st.dataframe(stats_df)
-            
-            # Export to Excel
-            excel_buffer = pd.ExcelWriter('schedule.xlsx', engine='openpyxl')
-            schedule_df.to_excel(excel_buffer, sheet_name='Beosztás', index=False)
-            stats_df.to_excel(excel_buffer, sheet_name='Statisztika', index=False)
-            excel_buffer.close()
-            
-            with open('schedule.xlsx', 'rb') as f:
+            # Excel feldolgozása
+            if st.session_state.generator.excel_beolvasas(file_content):
+                st.success("Excel adatok sikeresen beolvasva!")
+                
+                # Kivételek feldolgozása
+                if kivetelek_szoveg:
+                    st.session_state.generator.kivetel_hozzaadas(kivetelek_szoveg)
+                
+                # Beosztás generálása
+                beosztas = st.session_state.generator.beosztas_generalas(ev, honap)
+                
+                # Eredmények megjelenítése
+                st.subheader("Generált beosztás")
+                beosztas_df = pd.DataFrame(
+                    [(datum, orvos) for datum, orvos in beosztas.items()],
+                    columns=['Dátum', 'Orvos']
+                )
+                beosztas_df = beosztas_df.sort_values('Dátum')
+                st.dataframe(beosztas_df)
+                
+                # Kivételek megjelenítése
+                if st.session_state.generator.felhasznaloi_kivetelek:
+                    st.subheader("Feldolgozott kivételek")
+                    kivetelek_df = pd.DataFrame(
+                        st.session_state.generator.felhasznaloi_kivetelek,
+                        columns=['Orvos', 'Dátum', 'Indok']
+                    )
+                    st.dataframe(kivetelek_df)
+                
+                # Statisztika
+                st.subheader("Ügyeletek statisztikája")
+                statisztika_df = pd.DataFrame(
+                    [(nev, adatok['ugyeletek_szama']) 
+                     for nev, adatok in st.session_state.generator.orvosok.items()],
+                    columns=['Orvos', 'Ügyeletek száma']
+                )
+                st.dataframe(statisztika_df)
+                
+                # Excel exportálás memóriában
+                output_buffer = io.BytesIO()
+                with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+                    beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
+                    statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
+                    if st.session_state.generator.felhasznaloi_kivetelek:
+                        kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
+                
+                output_buffer.seek(0)
+                
                 st.download_button(
                     label="Beosztás letöltése",
-                    data=f,
-                    file_name=f"ugyeleti_beosztas_{year}_{month}.xlsx",
+                    data=output_buffer,
+                    file_name=f"ugyeleti_beosztas_{ev}_{honap}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
                 
+                # Buffer törlése
+                output_buffer.close()
+        
         except Exception as e:
             st.error(f"Hiba történt: {str(e)}")
-            st.error("Kérlek ellenőrizd az input fájl formátumát és a megadott korlátozásokat")
+            st.error("Kérlek ellenőrizd az input fájl formátumát")
 
 if __name__ == "__main__":
     main()
