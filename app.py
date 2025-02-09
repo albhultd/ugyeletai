@@ -76,6 +76,8 @@ class UgyeletiBeosztasGenerator:
             st.error(f"Hiba az Excel beolvasása során: {str(e)}")
             return False
 
+
+
     def kivetel_hozzaadas(self, szoveg):
         """Kivételek feldolgozása a felhasználói szövegből"""
         if not szoveg:
@@ -98,27 +100,35 @@ class UgyeletiBeosztasGenerator:
                 orvos_nev = ' '.join(szavak[:nev_vege])
                 
                 # Dátum feldolgozása
-                datum = None
+                datum_kezdet = None
+                datum_veg = None
                 datum_index = nev_vege
                 
-                # Különböző dátumformátumok kezelése
-                while datum_index < len(szavak) and not datum:
-                    try:
-                        # ÉÉÉÉ-HH-NN vagy ÉÉÉÉ.HH.NN formátum
-                        datum_str = szavak[datum_index].replace('.', '-')
-                        datum = datetime.strptime(datum_str, '%Y-%m-%d')
-                        break
-                    except ValueError:
-                        try:
-                            # NN-HH-ÉÉÉÉ vagy NN.HH.ÉÉÉÉ formátum
-                            datum_str = szavak[datum_index].replace('.', '-')
-                            datum = datetime.strptime(datum_str, '%d-%m-%Y')
+                # Dátumtartomány keresése
+                tartomany_match = None
+                for i, szo in enumerate(szavak[datum_index:], datum_index):
+                    # Tartomány minták keresése
+                    if "között" in szo or "-" in szo:
+                        tartomany_text = ' '.join(szavak[datum_index:i+2])  # Tartomány és környező szavak
+                        # Különböző tartomány formátumok keresése
+                        mintak = [
+                            r'(\d{1,2})[.-](\d{1,2})',  # "22-28" formátum
+                            r'(\d{1,2})\s*(?:és|-)?\s*(\d{1,2})\s+között',  # "22 és 28 között" formátum
+                            r'(\d{4})[.-](\d{1,2})[.-](\d{1,2})\s*(?:és|-)?\s*(\d{4})[.-](\d{1,2})[.-](\d{1,2})'  # teljes dátum tartomány
+                        ]
+                        
+                        for minta in mintak:
+                            match = re.search(minta, tartomany_text)
+                            if match:
+                                tartomany_match = match
+                                datum_index = i
+                                break
+                        if tartomany_match:
                             break
-                        except ValueError:
-                            datum_index += 1
                 
-                if not datum and datum_index + 2 < len(szavak):
-                    # Magyar hónapnév formátum kezelése
+                # Ha találtunk tartományt
+                if tartomany_match:
+                    # Hónap keresése a szövegben
                     honapok = {
                         'január': 1, 'február': 2, 'március': 3, 'április': 4,
                         'május': 5, 'június': 6, 'július': 7, 'augusztus': 8,
@@ -127,33 +137,108 @@ class UgyeletiBeosztasGenerator:
                         'júl': 7, 'aug': 8, 'szept': 9, 'okt': 10, 'nov': 11, 'dec': 12
                     }
                     
-                    try:
-                        ev = int(szavak[datum_index])
-                        honap = honapok.get(szavak[datum_index + 1].lower())
-                        nap = int(szavak[datum_index + 2])
-                        if honap:
-                            datum = datetime(ev, honap, nap)
-                            datum_index += 3
-                    except (ValueError, KeyError, IndexError):
-                        pass
+                    # Hónap és év keresése
+                    honap = None
+                    ev = datetime.now().year
+                    for szo in szavak[:datum_index]:
+                        if szo.lower() in honapok:
+                            honap = honapok[szo.lower()]
+                        elif szo.isdigit() and len(szo) == 4:
+                            ev = int(szo)
+                    
+                    if honap is None:
+                        raise ValueError("Nem található hónap megjelölés")
+                    
+                    # Tartomány feldolgozása
+                    if len(tartomany_match.groups()) == 2:  # Csak napok vannak megadva
+                        nap_kezdet = int(tartomany_match.group(1))
+                        nap_veg = int(tartomany_match.group(2))
+                        datum_kezdet = datetime(ev, honap, nap_kezdet)
+                        datum_veg = datetime(ev, honap, nap_veg)
+                    elif len(tartomany_match.groups()) == 6:  # Teljes dátumok
+                        datum_kezdet = datetime(
+                            int(tartomany_match.group(1)),
+                            int(tartomany_match.group(2)),
+                            int(tartomany_match.group(3))
+                        )
+                        datum_veg = datetime(
+                            int(tartomany_match.group(4)),
+                            int(tartomany_match.group(5)),
+                            int(tartomany_match.group(6))
+                        )
                 
-                if not datum:
+                # Ha nincs tartomány, egyszerű dátum keresése
+                else:
+                    datum_kezdet = self._parse_simple_date(szavak[datum_index:])
+                    if datum_kezdet:
+                        datum_veg = datum_kezdet
+                
+                if not datum_kezdet or not datum_veg:
                     st.warning(f"Nem sikerült feldolgozni a dátumot ebben a sorban: {sor}")
                     continue
                 
                 # Indok feldolgozása (a maradék szöveg)
-                indok = ' '.join(szavak[datum_index + 1:]) if datum_index + 1 < len(szavak) else 'nem elérhető'
+                indok_szavak = []
+                for szo in szavak[datum_index+1:]:
+                    if not any(k in szo.lower() for k in ['között', 'és']):
+                        indok_szavak.append(szo)
+                indok = ' '.join(indok_szavak) if indok_szavak else 'nem elérhető'
                 
-                # Kivétel hozzáadása
-                self.felhasznaloi_kivetelek.append((
-                    orvos_nev,
-                    datum.strftime('%Y-%m-%d'),
-                    indok
-                ))
+                # Kivételek hozzáadása a tartomány minden napjára
+                aktualis_datum = datum_kezdet
+                while aktualis_datum <= datum_veg:
+                    self.felhasznaloi_kivetelek.append((
+                        orvos_nev,
+                        aktualis_datum.strftime('%Y-%m-%d'),
+                        indok
+                    ))
+                    aktualis_datum += timedelta(days=1)
                 
             except Exception as e:
                 st.warning(f"Hiba a sor feldolgozása során: {sor} - {str(e)}")
                 continue
+    
+    def _parse_simple_date(self, szavak):
+        """Egyszerű dátum feldolgozása"""
+        honapok = {
+            'január': 1, 'február': 2, 'március': 3, 'április': 4,
+            'május': 5, 'június': 6, 'július': 7, 'augusztus': 8,
+            'szeptember': 9, 'október': 10, 'november': 11, 'december': 12,
+            'jan': 1, 'feb': 2, 'már': 3, 'ápr': 4, 'máj': 5, 'jún': 6,
+            'júl': 7, 'aug': 8, 'szept': 9, 'okt': 10, 'nov': 11, 'dec': 12
+        }
+        
+        try:
+            for i, szo in enumerate(szavak):
+                # ÉÉÉÉ-HH-NN vagy ÉÉÉÉ.HH.NN formátum
+                try:
+                    datum_str = szo.replace('.', '-')
+                    return datetime.strptime(datum_str, '%Y-%m-%d')
+                except ValueError:
+                    pass
+                
+                # NN-HH-ÉÉÉÉ vagy NN.HH.ÉÉÉÉ formátum
+                try:
+                    datum_str = szo.replace('.', '-')
+                    return datetime.strptime(datum_str, '%d-%m-%Y')
+                except ValueError:
+                    pass
+                
+                # Magyar hónapnév formátum
+                if i + 2 < len(szavak):
+                    try:
+                        ev = int(szavak[i])
+                        honap = honapok.get(szavak[i + 1].lower())
+                        nap = int(szavak[i + 2])
+                        if honap:
+                            return datetime(ev, honap, nap)
+                    except (ValueError, KeyError, IndexError):
+                        pass
+        except Exception:
+            return None
+        
+        return None
+
 
     def elerheto_orvosok(self, datum):
         """Visszaadja az adott napon elérhető orvosokat"""
