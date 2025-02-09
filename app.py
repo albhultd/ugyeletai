@@ -68,6 +68,9 @@ class UgyeletiBeosztasGenerator:
         if not szoveg:
             return
             
+        # Töröljük a meglévő kivételeket az új feldolgozás előtt
+        self.felhasznaloi_kivetelek = []
+            
         for sor in szoveg.split('\n'):
             if not sor.strip():
                 continue
