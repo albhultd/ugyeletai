@@ -76,7 +76,141 @@ class UgyeletiBeosztasGenerator:
             st.error(f"Hiba az Excel beolvasása során: {str(e)}")
             return False
 
-    # [A többi metódus változatlan marad...]
+    def kivetel_hozzaadas(self, szoveg):
+        """Kivételek feldolgozása a felhasználói szövegből"""
+        if not szoveg:
+            return
+            
+        for sor in szoveg.split('\n'):
+            if not sor.strip():
+                continue
+                
+            try:
+                # Szöveg szétbontása
+                szavak = sor.strip().split()
+                if len(szavak) < 2:
+                    continue
+                
+                # Név feldolgozása (első szó vagy Dr.-ral kezdődő rész)
+                nev_vege = 1
+                if szavak[0].startswith('Dr'):
+                    nev_vege = 2
+                orvos_nev = ' '.join(szavak[:nev_vege])
+                
+                # Dátum feldolgozása
+                datum = None
+                datum_index = nev_vege
+                
+                # Különböző dátumformátumok kezelése
+                while datum_index < len(szavak) and not datum:
+                    try:
+                        # ÉÉÉÉ-HH-NN vagy ÉÉÉÉ.HH.NN formátum
+                        datum_str = szavak[datum_index].replace('.', '-')
+                        datum = datetime.strptime(datum_str, '%Y-%m-%d')
+                        break
+                    except ValueError:
+                        try:
+                            # NN-HH-ÉÉÉÉ vagy NN.HH.ÉÉÉÉ formátum
+                            datum_str = szavak[datum_index].replace('.', '-')
+                            datum = datetime.strptime(datum_str, '%d-%m-%Y')
+                            break
+                        except ValueError:
+                            datum_index += 1
+                
+                if not datum and datum_index + 2 < len(szavak):
+                    # Magyar hónapnév formátum kezelése
+                    honapok = {
+                        'január': 1, 'február': 2, 'március': 3, 'április': 4,
+                        'május': 5, 'június': 6, 'július': 7, 'augusztus': 8,
+                        'szeptember': 9, 'október': 10, 'november': 11, 'december': 12,
+                        'jan': 1, 'feb': 2, 'már': 3, 'ápr': 4, 'máj': 5, 'jún': 6,
+                        'júl': 7, 'aug': 8, 'szept': 9, 'okt': 10, 'nov': 11, 'dec': 12
+                    }
+                    
+                    try:
+                        ev = int(szavak[datum_index])
+                        honap = honapok.get(szavak[datum_index + 1].lower())
+                        nap = int(szavak[datum_index + 2])
+                        if honap:
+                            datum = datetime(ev, honap, nap)
+                            datum_index += 3
+                    except (ValueError, KeyError, IndexError):
+                        pass
+                
+                if not datum:
+                    st.warning(f"Nem sikerült feldolgozni a dátumot ebben a sorban: {sor}")
+                    continue
+                
+                # Indok feldolgozása (a maradék szöveg)
+                indok = ' '.join(szavak[datum_index + 1:]) if datum_index + 1 < len(szavak) else 'nem elérhető'
+                
+                # Kivétel hozzáadása
+                self.felhasznaloi_kivetelek.append((
+                    orvos_nev,
+                    datum.strftime('%Y-%m-%d'),
+                    indok
+                ))
+                
+            except Exception as e:
+                st.warning(f"Hiba a sor feldolgozása során: {sor} - {str(e)}")
+                continue
+
+    def elerheto_orvosok(self, datum):
+        """Visszaadja az adott napon elérhető orvosokat"""
+        ev = datum.year
+        honap = datum.month
+        nap = datum.day
+        datum_str = datum.strftime('%Y-%m-%d')
+        
+        elerheto = []
+        for orvos in self.orvosok:
+            # Ellenőrizzük a felhasználói kivételeket
+            kivetel_talalat = False
+            for kivetel in self.felhasznaloi_kivetelek:
+                if kivetel[0] == orvos and kivetel[1] == datum_str:
+                    kivetel_talalat = True
+                    break
+            
+            if kivetel_talalat:
+                continue
+            
+            # Ellenőrizzük az Excel-ben megadott kéréseket
+            if (ev in self.keresek and 
+                honap in self.keresek[ev] and 
+                orvos in self.keresek[ev][honap] and 
+                nap in self.keresek[ev][honap][orvos]):
+                
+                status = self.keresek[ev][honap][orvos][nap]
+                if status not in ["Szabadság", "Ne ügyeljen"]:
+                    elerheto.append(orvos)
+            else:
+                elerheto.append(orvos)
+                
+        return elerheto
+    
+    def beosztas_generalas(self, ev, honap):
+        """Havi beosztás generálása"""
+        napok_szama = calendar.monthrange(ev, honap)[1]
+        beosztas = {}
+        
+        for nap in range(1, napok_szama + 1):
+            datum = datetime(ev, honap, nap)
+            elerheto_orvosok = self.elerheto_orvosok(datum)
+            
+            if not elerheto_orvosok:
+                st.warning(f"Nem található elérhető orvos: {datum.strftime('%Y-%m-%d')}")
+                continue
+            
+            # Válasszuk ki azt az orvost, akinek a legkevesebb ügyelete van
+            valasztott_orvos = min(
+                elerheto_orvosok,
+                key=lambda x: self.orvosok[x]['ugyeletek_szama']
+            )
+            
+            beosztas[datum.strftime('%Y-%m-%d')] = valasztott_orvos
+            self.orvosok[valasztott_orvos]['ugyeletek_szama'] += 1
+        
+        return beosztas
 
 def main():
     st.set_page_config(page_title="Ügyeleti Beosztás Generáló", layout="wide")
@@ -154,24 +288,25 @@ def main():
                 
                 # Excel exportálás memóriában
                 output_buffer = io.BytesIO()
-                with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-                    beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
-                    statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
-                    if st.session_state.generator.felhasznaloi_kivetelek:
-                        kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
-                
-                output_buffer.seek(0)
-                
-                st.download_button(
-                    label="Beosztás letöltése",
-                    data=output_buffer,
-                    file_name=f"ugyeleti_beosztas_{ev}_{honap}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                
-                # Buffer törlése
-                output_buffer.close()
-        
+                try:
+                    with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+                        beosztas_df.to_excel(writer, sheet_name='Beosztás', index=False)
+                        statisztika_df.to_excel(writer, sheet_name='Statisztika', index=False)
+                        if st.session_state.generator.felhasznaloi_kivetelek:
+                            kivetelek_df.to_excel(writer, sheet_name='Kivételek', index=False)
+                    
+                    output_buffer.seek(0)
+                    st.download_button(
+                        label="Beosztás letöltése",
+                        data=output_buffer,
+                        file_name=f"ugyeleti_beosztas_{ev}_{honap}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.error(f"Hiba történt az Excel exportálása során: {str(e)}")
+                finally:
+                    output_buffer.close()
+                    
         except Exception as e:
             st.error(f"Hiba történt: {str(e)}")
             st.error("Kérlek ellenőrizd az input fájl formátumát")
